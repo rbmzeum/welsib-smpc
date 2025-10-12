@@ -1,0 +1,26 @@
+# WSMPC демонстрация
+
+Демо позволяет реконфигурировать smpc.conf по вашему усмотрению в ограниченных пределах демонстрационных ключей и демонстрационного диапазона значений.
+
+Формат smpc.conf:
+Первые строки содеражт пути к файлам публичных ключей клиентов владеющих значениями частей суммы, в предпоследней позиции указывания путь к клиенту со значением суммы, в последней строке ключ сервера-контролёра.
+
+
+# Запуск сервера-контролёра:
+
+cat ./secrets/smpc-server-password.txt | ./bin/welsib-smpc-server --key=keys/private/smpc-server-key.pem --config=smpc.conf --concurrency=4 > certificate.txt
+
+# Запуск клиента с value = 47, 18, 35
+
+cat ./secrets/smpc-client-value47-password.txt | ./bin/welsib-smpc-client --key=keys/private/smpc-client-value47-key.pem --config=smpc.conf --concurrency=4 --value=values/encrypted/value-client-value47.txt.aggc > part-value47.txt
+cat ./secrets/smpc-client-value18-password.txt | ./bin/welsib-smpc-client --key=keys/private/smpc-client-value18-key.pem --config=smpc.conf --concurrency=4 --value=values/encrypted/value-client-value18.txt.aggc > part-value18.txt
+cat ./secrets/smpc-client-value35-password.txt | ./bin/welsib-smpc-client --key=keys/private/smpc-client-value35-key.pem --config=smpc.conf --concurrency=4 --value=values/encrypted/value-client-value35.txt.aggc > part-value35.txt
+
+# Запуск клиента с value суммы = 100 (100 == 47+18+35)
+cat ./secrets/smpc-client-value100-password.txt | ./bin/welsib-smpc-client --key=keys/private/smpc-client-value100-key.pem --config=smpc.conf --concurrency=4 --value=values/encrypted/value-client-value100.txt.aggc --sum > sum-value100.txt
+
+# welsib-make-key, welsib-make-point, welsib-encrypt-file публично не распространяются
+
+# Валидация сертификата:
+
+cat ./certificate.txt | ../bin/welsib-smpc-verifier --config=smpc.conf
