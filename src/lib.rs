@@ -11,6 +11,7 @@ pub mod certificate;
 pub mod random;
 pub mod hash;
 pub mod d;
+pub mod range_prove;
 
 pub use crate::d::d;
 

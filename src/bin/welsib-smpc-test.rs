@@ -195,12 +195,12 @@ fn main() {
     // то для этого ему понадобится выполнить публикацию ключей: mc для p1 и rv0x2rc для p2
 
     assert_eq!(&p1, &p2); // 1900==1900
-    // println!("Assert Points:\n{:#?}\n{:#?}", &p1, &p2);
+    println!("Assert Points:\n{:x?}\n{:x?}", &p1, &p2);
 
     // Отладка методов используемых при сетевом взаимодействии
     smpc_field.set_matrix_points_debug(matrix_points);
     smpc_field.set_list_points_debug(list_points);
 
     let result = smpc_field.get_solution(&ctrl_secret_key);
-    // println!("Solution: {:#?}", &result);
+    println!("Solution: {:x?}", &result);
 }
