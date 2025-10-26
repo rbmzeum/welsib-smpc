@@ -261,22 +261,19 @@ pub fn range_prove(curve: &EllipticCurve, value: u128, range: usize, k: &U512) -
     Some((c_keys, c_points, confidential_value))
 }
 
-pub fn range_verify(curve: &EllipticCurve, c_points: &Vec<Point>, range: usize, value_left_side: Point) -> bool {
-    if range < c_points.len() {
-        return false;
-    }
-    let mut value_right_side_parts = vec![];
+pub fn range_point_from_bits(curve: &EllipticCurve, c_points: &Vec<Point>, range: usize) -> Point {
+    let mut value_parts = vec![];
     for (i, c) in c_points.iter().enumerate() {
         if i == 0 {
             // Public:
             // P(c_i) = c*2^i
-            value_right_side_parts.push(
+            value_parts.push(
                 c.clone()
             );
         } else {
             // Public:
             // P(c_i) = c*2^i
-            value_right_side_parts.push(
+            value_parts.push(
                 curve.multiply(
                     &U512::from_u64(1 << i),
                     c
@@ -285,7 +282,14 @@ pub fn range_verify(curve: &EllipticCurve, c_points: &Vec<Point>, range: usize, 
         }
     }
 
-    let value_right_side = curve.point_sum(value_right_side_parts).unwrap();
+    curve.point_sum(value_parts).unwrap()
+}
+
+pub fn range_verify(curve: &EllipticCurve, c_points: &Vec<Point>, range: usize, value_left_side: Point) -> bool {
+    if range < c_points.len() {
+        return false;
+    }
+    let value_right_side = range_point_from_bits(curve, c_points, range);
 
     // println!("Value point sum:\n{:x?}\n{:x?}\n{:?}", &value_left_side, &value_right_side, value_left_side == value_right_side);
 
