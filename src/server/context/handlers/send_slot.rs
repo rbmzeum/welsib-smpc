@@ -21,13 +21,16 @@ use welsib_u512_ec::verify::welsib_verify;
 
 impl WelsibContext {
     pub fn do_send_slot(&mut self) {
-        // println!("DEBUG DO Send slot");
+        // crate::dd(format!("DEBUG DO Send slot"), "key");
+        crate::d(format!("DEBUG DO Send slot"));
         let mut smpc_send_slot_response_command = None;
         // создать обработчик команды (принять слот и поместить в соответствующий слот сервера
         // и ответить клиенту о статусе операции
         // Переключить на состояние обрабатывающее Send запрос (провалидировать запрос от клиента с учётом handshake.nonce_sig)
         let next_state = if let Some(smpc_request) = self.smpc_request() {
+            crate::dd(format!("DEBUG DO Send slot (smpc_request), {:#?}", &smpc_request), "key");
             if let Some(send_slot_request_attr) = SendSlotRequestAttributes::from_json(&smpc_request.attributes()) {
+                crate::dd(format!("DEBUG DO Send slot (send_slot_request_attr)"), "key");
                 // проверить, что запрос пришёл от клиента в отведённый интервал времени (отсеять подачу устаревших перехваченных MiTM значений)
                 let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis() / 8000; // div 8 seconds
                 let nonce_sig_bytes = safe_decode(&send_slot_request_attr.nonce_sig);
@@ -43,7 +46,7 @@ impl WelsibContext {
                             // println!("Nonce sig bytes:\n{:?}\n{:?}", &nonce_sig_bytes, &nonce_sig.to_be_bytes());
                             // TODO: отладить код в глубину
 
-                            let slot_type_byte = match send_slot_request_attr.slot_type { SlotType::Controller => 1u8, SlotType::Main => 2, SlotType::Value => 3, _ => 0};
+                            let slot_type_byte = match send_slot_request_attr.slot_type { SlotType::Controller => 1u8, SlotType::Main => 2, SlotType::Value => 3, SlotType::Key => 4, _ => 0};
                             let slot_index_bytes = send_slot_request_attr.slot_index.to_be_bytes().to_vec();
                             let bytes = [
                                 send_slot_request_attr.nonce_sig.as_bytes().to_vec(),
@@ -93,6 +96,17 @@ impl WelsibContext {
                                                 // подготовить ответ клиенту
                                                 let private_key = self.keypair.get_secret_key();
                                                 let smpc_send_slot_response_attributes = SendSlotResponseAttributes::new(ResponseStatus::Success, &signature); // привяка ответа к сигнатуре запроса
+                                                smpc_send_slot_response_command = Some(SMPCResponse::make(smpc_send_slot_response_attributes.to_json(), &private_key));
+                                                WelsibState::AwaitOutput
+                                            },
+                                            SlotType::Key => {
+                                                // TODO: клиент отправляет серверу слот (сервер сохраняет его в памяти сервера)
+                                                crate::dd(format!("Send slot request, SlotType::Key {:#?}", &send_slot_request_attr.slot_index), "key");
+                                                smpc_field.set_random_client_range_key_slot(client_verify_key.clone(), send_slot_request_attr.slot_index, slot);
+                                                // подготовить ответ клиенту
+                                                let private_key = self.keypair.get_secret_key();
+                                                let smpc_send_slot_response_attributes = SendSlotResponseAttributes::new(ResponseStatus::Success, &signature); // привяка ответа к сигнатуре запроса
+                                                crate::dd(format!("smpc_send_slot_response_command\n{:#?}", &smpc_send_slot_response_attributes.to_json()), "key");
                                                 smpc_send_slot_response_command = Some(SMPCResponse::make(smpc_send_slot_response_attributes.to_json(), &private_key));
                                                 WelsibState::AwaitOutput
                                             }

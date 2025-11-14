@@ -12,10 +12,18 @@ use welsib_u512::u512::{U512, U512Add};
 use welsib_u512_ec::point::Point;
 use welsib_u512_ec::elliptic_curve::x2_mod::x2_mod;
 use welsib_u512_ec::elliptic_curve::EllipticCurve;
+use std::thread::sleep;
 
 pub struct SMPCBuffer {
+    // ключи range proof
+    random_range_key: U512,
+    random_range_key_parts: Option<Vec<U512>>,
+    range_key_slots: Option<BTreeMap<U512, Slot>>,
+    range_recieved_slots: Option<Vec<Slot>>,
+    range_received_keys: Option<BTreeMap<usize, U512>>,
+
     // ключи суммы
-    random_nonce_sum: U512,
+    random_nonce_sum: Option<U512>,
     random_nonce_orig_values: Option<Vec<U512>>,
     random_nonce_orig_slots: Option<BTreeMap<U512, Slot>>, // key: Point.x, value: Slot
     controller_random_slot: Option<Slot>, // слот контролёра (сервера проверяющего)
@@ -37,9 +45,16 @@ pub struct SMPCBuffer {
 
 impl SMPCBuffer {
     pub fn new() -> Self {
-        let random_nonce_sum = create_shifted_random();
+        // let random_nonce_sum = create_shifted_random(); // устанавливается из результата range proof
+        let random_range_key = create_shifted_random();
         Self {
-            random_nonce_sum,
+            random_range_key,
+            random_range_key_parts: None,
+            range_key_slots: None,
+            range_recieved_slots: None,
+            range_received_keys: None,
+            //
+            random_nonce_sum: None,
             random_nonce_orig_values: None,
             random_nonce_orig_slots: None,
             controller_random_slot: None,
@@ -57,22 +72,22 @@ impl SMPCBuffer {
         }
     }
 
-    pub fn create_random_nonce_additive_parts(&mut self, participants: usize, public_keys: &Vec<Point>, planned: Arc<Mutex<VecDeque<Box<dyn Calculation>>>>, smpc_buffer: Arc<Mutex<SMPCBuffer>>) -> std::io::Result<()> {
-        if let Some(parts) = create_random_additive_parts(&self.random_nonce_sum, participants) {
+    pub fn create_range_key_additive_parts(&mut self, participants: usize, public_keys: &Vec<Point>, planned: Arc<Mutex<VecDeque<Box<dyn Calculation>>>>, smpc_buffer: Arc<Mutex<SMPCBuffer>>) -> std::io::Result<()> {
+        if let Some(parts) = create_random_additive_parts(&self.random_range_key, participants) {
             // зашифровать parts для каждого участника используя параллельных воркеров runner, planned очереди и разместить в smpc_field в соответствующих слотах
-            self.random_nonce_orig_values = Some(parts);
+            self.random_range_key_parts = Some(parts);
             // добавить в очередь для параллельного шифрования
             if let Ok(mut planned) = planned.lock() {
-                if let Some(random_nonce_values) = &mut self.random_nonce_orig_values {
-                    if public_keys.len() < random_nonce_values.len() {
+                if let Some(random_range_key_parts) = &mut self.random_range_key_parts {
+                    if public_keys.len() < random_range_key_parts.len() {
                         return Err(std::io::Error::new(
                             std::io::ErrorKind::Interrupted,
                             "Ошибка: недостаточно публичных ключей в конфигурации",
                         ));
                     }
-                    for (i, item) in random_nonce_values.iter().enumerate() {
+                    for (i, item) in random_range_key_parts.iter().enumerate() {
                         let mut calc = Encode::new(smpc_buffer.clone());
-                        calc.set_slot_type(SlotType::Main);
+                        calc.set_slot_type(SlotType::Key);
                         calc.set_value(item.clone());
                         calc.set_public_key(public_keys[i].clone());
                         planned.push_front(Box::new(calc));
@@ -80,12 +95,52 @@ impl SMPCBuffer {
                     }
                 }
             }
-            // push_computation (planned) для runners
-            // println!("Секретные ключи нонс клиента владельца суммы: {:?}", &self.random_nonce_orig_values);
         } else {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::Interrupted,
                 "Ошибка: отсутствуют участники или их количество меньше трёх",
+            ));
+        }
+
+        Ok(())
+    }
+
+    pub fn create_random_nonce_additive_parts(&mut self, participants: usize, public_keys: &Vec<Point>, planned: Arc<Mutex<VecDeque<Box<dyn Calculation>>>>, smpc_buffer: Arc<Mutex<SMPCBuffer>>) -> std::io::Result<()> {
+        if let Some(random_nonce_sum) = self.random_nonce_sum {
+            if let Some(parts) = create_random_additive_parts(&random_nonce_sum, participants) {
+                // зашифровать parts для каждого участника используя параллельных воркеров runner, planned очереди и разместить в smpc_field в соответствующих слотах
+                self.random_nonce_orig_values = Some(parts);
+                // добавить в очередь для параллельного шифрования
+                if let Ok(mut planned) = planned.lock() {
+                    if let Some(random_nonce_values) = &mut self.random_nonce_orig_values {
+                        if public_keys.len() < random_nonce_values.len() {
+                            return Err(std::io::Error::new(
+                                std::io::ErrorKind::Interrupted,
+                                "Ошибка: недостаточно публичных ключей в конфигурации",
+                            ));
+                        }
+                        for (i, item) in random_nonce_values.iter().enumerate() {
+                            let mut calc = Encode::new(smpc_buffer.clone());
+                            calc.set_slot_type(SlotType::Main);
+                            calc.set_value(item.clone());
+                            calc.set_public_key(public_keys[i].clone());
+                            planned.push_front(Box::new(calc));
+                            // println!("Planned (pushed) {}", &i);
+                        }
+                    }
+                }
+                // push_computation (planned) для runners
+                // println!("Секретные ключи нонс клиента владельца суммы: {:?}", &self.random_nonce_orig_values);
+            } else {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::Interrupted,
+                    "Ошибка: отсутствуют участники или их количество меньше трёх",
+                ));
+            }
+        } else {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::Interrupted,
+                "Ошибка: не установлено значение random_nonce_sum",
             ));
         }
 
@@ -153,6 +208,15 @@ impl SMPCBuffer {
         }
     }
 
+    pub fn insert_range_slot(&mut self, public_key: Point, slot: Slot) {
+        if self.range_key_slots.is_none() {
+            self.range_key_slots = Some(BTreeMap::new());
+        }
+        if let Some(range_key_slots) = &mut self.range_key_slots {
+            range_key_slots.insert(public_key.x, slot);
+        }
+    }
+
     pub fn insert_received_value(&mut self, slot_position: usize, value: U512) {
         if self.received_values.is_none() {
             self.received_values = Some(BTreeMap::new());
@@ -162,9 +226,59 @@ impl SMPCBuffer {
         }
     }
 
+    pub fn insert_received_key(&mut self, slot_position: usize, key: U512) {
+        if self.range_received_keys.is_none() {
+            self.range_received_keys = Some(BTreeMap::new());
+        }
+        if let Some(range_received_keys) = &mut self.range_received_keys {
+            range_received_keys.insert(slot_position, key);
+        }
+    }
+
+    pub fn get_range_received_keys(&self) -> &Option<BTreeMap<usize, U512>> {
+        &self.range_received_keys
+    }
+
+    // pub fn agg_received_key(&mut self, public_keys: &Vec<Point>) {
+    //     crate::dd(format!("DEBUG agg_received_key:\n{:?}", &self.range_received_keys), "agg_received_key");
+    //     loop {
+    //         if let Some(range_received_keys) = &self.range_received_keys {
+    //             crate::dd(format!("DEBUG agg_received_key:\n{:?}", &range_received_keys), "agg_received_key");
+    //             let mut keys: Vec<U512> = vec![];
+    //             if range_received_keys.len() == public_keys.len() {
+    //                 for (_, key) in range_received_keys {
+    //                     keys.push(key.clone());
+    //                 }
+    //                 // self.set_random_nonce_sum(welsib_u512_sum(range_received_keys.iter().map(|(_, v)| v.clone()).collect::<Vec<U512>>()));
+    //                 crate::dd(format!("DEBUG set_random_nonce_sum:\n{:?}", &keys), "agg_received_key");
+    //                 self.set_random_nonce_sum(welsib_u512_sum(keys));
+    //                 break;
+    //             } else {
+    //                 crate::dd(format!("DEBUG await: range_received_keys.len() == public_keys.len():\n{:?} == {:?}", &range_received_keys.len(), &public_keys.len()), "agg_received_key");
+    //                 sleep(std::time::Duration::from_millis(100));
+    //             }
+    //         } else {
+    //             crate::dd(format!("DEBUG agg_received_key (None):\n{:?}", &self.range_received_keys), "agg_received_key");
+    //             sleep(std::time::Duration::from_millis(100));
+    //         }
+    //     }
+    // }
+
     pub fn get_random_nonce_slot_by_public_key(&self, public_key: &Point) -> Option<Slot> {
         if let Some(random_nonce_orig_slots) = &self.random_nonce_orig_slots {
             if let Some(slot) = random_nonce_orig_slots.get(&public_key.x) {
+                Some(slot.clone())
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    }
+
+    pub fn get_random_range_slot_by_public_key(&self, public_key: &Point) -> Option<Slot> {
+        if let Some(range_key_slots) = &self.range_key_slots {
+            if let Some(slot) = range_key_slots.get(&public_key.x) {
                 Some(slot.clone())
             } else {
                 None
@@ -206,8 +320,20 @@ impl SMPCBuffer {
         }
     }
 
-    pub fn get_random_nonce_sum(&self) -> U512 {
+    pub fn insert_key_slot(&mut self, slot: &Slot) {
+        if let Some(range_recieved_slots) = &mut self.range_recieved_slots {
+            range_recieved_slots.push(slot.clone());
+        } else {
+            self.range_recieved_slots = Some(vec![slot.clone()]);
+        }
+    }
+
+    pub fn get_random_nonce_sum(&self) -> Option<U512> {
         self.random_nonce_sum.clone()
+    }
+
+    pub fn set_random_nonce_sum(&mut self, random_nonce_sum: U512) {
+        self.random_nonce_sum = Some(random_nonce_sum)
     }
 
     // Возвращает собственное Main значение владельца суммы
@@ -269,7 +395,7 @@ impl SMPCBuffer {
             if let Some(sum_random_slot_value) = &self.sum_random_slot_value {
                 let keys = [
                     controller_random_slot_value.clone(), // c
-                    self.get_random_nonce_sum(), // r
+                    self.get_random_nonce_sum().unwrap(), // r
                     x2_mod(&sum_random_slot_value, &curve.p).unwrap(), // n
                     x2_mod(&value, &curve.p).unwrap(), // v
                 ].to_vec();
@@ -279,7 +405,7 @@ impl SMPCBuffer {
                     if let Some(random_nonce_orig_values_last) = random_nonce_orig_values.get(random_nonce_orig_values.len()-1) {
                         let keys = [
                             controller_random_slot_value.clone(), // c
-                            self.get_random_nonce_sum(), // r
+                            self.get_random_nonce_sum().unwrap(), // r
                             x2_mod(&random_nonce_orig_values_last, &curve.p).unwrap(), // n
                             x2_mod(&value, &curve.p).unwrap(), // v
                         ].to_vec();

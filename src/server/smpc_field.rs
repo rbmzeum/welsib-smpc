@@ -18,6 +18,13 @@ use welsib_u512_ec::sign::welsib_u512_sum;
 
 #[derive(Debug)]
 pub struct SMPCField {
+    // ключи range proof (server)
+    random_control_range_key: U512,
+    random_control_range_key_parts: Option<Vec<U512>>,
+    random_client_range_key_slots: BTreeMap<U512, BTreeMap<usize, Slot>>,
+
+    // TODO: range bit proof (128 points от каждого клиента)
+
     // серверные ключи контролёра
     random_control_sum: U512,
     random_control_values: Vec<U512>,
@@ -27,12 +34,18 @@ pub struct SMPCField {
     main_client_slots: BTreeMap<U512, Slot>,
     matrix_points: BTreeMap<U512, Point>,
     list_points: BTreeMap<U512, Point>,
+    // TODO: range random value points
 }
 
 impl SMPCField {
     pub fn new() -> Self {
-        let random_control_sum = create_shifted_random();
+        let random_control_sum = create_shifted_random(); // устанавливается из результата range proof
+        let random_control_range_key = create_shifted_random();
         Self {
+            random_control_range_key,
+            random_control_range_key_parts: None,
+            random_client_range_key_slots: BTreeMap::new(),
+            //
             random_control_sum,
             random_control_values: vec![],
             random_control_slots: BTreeMap::new(),
@@ -73,6 +86,43 @@ impl SMPCField {
     }
     // END DEBUG
 
+    pub fn create_range_key_additive_parts(&mut self, participants: usize, public_keys: &Vec<Point>, planned: Arc<Mutex<VecDeque<Box<dyn Calculation>>>>, smpc_field: Arc<Mutex<SMPCField>>) -> std::io::Result<()> {
+        if let Some(parts) = create_random_additive_parts(&self.random_control_range_key, participants) {
+            // зашифровать parts для каждого участника используя параллельных воркеров runner, planned очереди и разместить в smpc_field в соответствующих слотах
+            self.random_control_range_key_parts = Some(parts);
+            // добавить в очередь для параллельного шифрования
+            if let Ok(mut planned) = planned.lock() {
+                if let Some(random_control_range_key_parts) = &mut self.random_control_range_key_parts {
+                    if public_keys.len() < random_control_range_key_parts.len() {
+                        return Err(std::io::Error::new(
+                            std::io::ErrorKind::Interrupted,
+                            "Ошибка: недостаточно публичных ключей в конфигурации",
+                        ));
+                    }
+                    for (i, item) in random_control_range_key_parts.iter().enumerate() {
+                        let mut calc = Encode::new(smpc_field.clone());
+                        calc.set_slot_type(SlotType::Key);
+                        calc.set_value(item.clone());
+                        calc.set_public_key(public_keys[i].clone());
+                        // calc.set_public_key(public_keys[public_keys.len()-1].clone()); // Ключ контролёра
+                        calc.set_control_public_key(public_keys[public_keys.len()-1].clone());
+                        calc.set_index(i);
+                        // calc.set_index(public_keys.len()-1);
+                        planned.push_front(Box::new(calc));
+                        // println!("Planned (pushed) {}", &i);
+                    }
+                }
+            }
+        } else {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::Interrupted,
+                "Ошибка: отсутствуют участники или их количество меньше трёх",
+            ));
+        }
+
+        Ok(())
+    }
+
     pub fn create_random_additive_parts(&mut self, participants: usize, public_keys: &Vec<Point>, planned: Arc<Mutex<VecDeque<Box<dyn Calculation>>>>, smpc_field: Arc<Mutex<SMPCField>>) -> std::io::Result<()> {
         if let Some(parts) = create_random_additive_parts(&self.random_control_sum, participants) {
             // зашифровать parts для каждого участника используя параллельных воркеров runner, planned очереди и разместить в smpc_field в соответствующих слотах
@@ -104,6 +154,54 @@ impl SMPCField {
         }
 
         Ok(())
+    }
+
+    pub fn set_random_client_range_key_slot(&mut self, client_public_key: Point, index: usize, slot: Slot) {
+        self.random_client_range_key_slots
+            .entry(client_public_key.x)
+            .or_insert_with(BTreeMap::new)
+            .insert(index, slot);
+    }
+
+    pub fn get_random_client_range_key_slot(&self, client_public_key: Point, index: usize) -> Option<&Slot> {
+        crate::dd(format!("DEBUG SlotType::Key (get_random_client_range_key_slots, client_public_key, index):\n{:?}\n{:?}", &client_public_key, &index), "receive_slot");
+        crate::dd(format!("DEBUG SlotType::Key (random_client_range_key_slots):\n{:?}", &self.random_client_range_key_slots), "receive_slot");
+        self.random_client_range_key_slots
+            .get(&client_public_key.x)
+            .and_then(|inner_map| inner_map.get(&index))
+    }
+
+    // pub fn set_random_control_range_key_slot(&mut self, public_key: Point, slot: Slot) {
+    //     // self.random_control_range_key_slots.insert(public_key.x, slot);
+    //     crate::dd(format!("DEBUG SlotType::Key (set_random_control_range_key_slot):\n{:?}", &self.random_client_range_key_slots), "set_random_control_range_key_slot");
+    //     if let Some(random_control_range_key_parts) = &self.random_control_range_key_parts {
+    //         let index = random_control_range_key_parts.len();
+    //         // TODO:
+    //         // public_key - для кого (из этого вычисляется индекс)
+    //         // вместо public_key в set_random_client_range_key_slot использовать controller_public_key
+    //         self.set_random_client_range_key_slot(public_key, index, slot);
+    //     }
+    // }
+
+    // pub fn get_random_control_range_key_slot(&self, public_key: Point) -> Option<&Slot> {
+    //     // TODO: 
+    //     // self.random_control_range_key_slots.get(&public_key.x)
+    //     crate::dd(format!("DEBUG SlotType::Key (get_random_control_range_key_slot, public_key):\n{:#?}", &public_key), "receive_slot");
+    //     if let Some(random_control_range_key_parts) = &self.random_control_range_key_parts {
+    //         let index = random_control_range_key_parts.len();
+    //         crate::dd(format!("DEBUG SlotType::Key (get_random_control_range_key_slot, index):\n{:#?}", &index), "receive_slot");
+    //         self.get_random_client_range_key_slot(public_key, index)
+    //     } else {
+    //         None
+    //     }
+    // }
+
+    pub fn get_random_control_sum(&self) -> U512 {
+        self.random_control_sum.clone()
+    }
+
+    pub fn set_random_control_sum(&mut self, random_control_sum: U512) {
+        self.random_control_sum = random_control_sum
     }
 
     // слоты сервера (контролёра)

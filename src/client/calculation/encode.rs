@@ -48,6 +48,9 @@ impl Calculation for Encode {
                                 // println!("DEBUG calculation completed (Value)");
                                 smpc_buffer.insert_client_slot(public_key.clone(), slot);
                             },
+                            SlotType::Key => {
+                                smpc_buffer.insert_range_slot(public_key.clone(), slot);
+                            }
                         }
                     }
                 }
@@ -65,7 +68,7 @@ impl Encode {
     pub fn set_value(&mut self, value: U512) {
         self.value = Some(value)
     }
-    
+
     pub fn set_public_key(&mut self, public_key: Point) {
         self.public_key = Some(public_key)
     }

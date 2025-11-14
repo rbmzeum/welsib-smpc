@@ -18,7 +18,7 @@ pub struct SendSlotRequestAttributes {
 
 impl SendSlotRequestAttributes {
     pub fn new(slot_type: SlotType, slot_index: usize, slot_bytes: Vec<u8>, client_index: usize, nonce_sig: String, keypair: &Keypair) -> Self {
-        let slot_type_byte = match slot_type { SlotType::Controller => 1u8, SlotType::Main => 2, SlotType::Value => 3, _ => 0};
+        let slot_type_byte = match slot_type { SlotType::Controller => 1u8, SlotType::Main => 2, SlotType::Value => 3, SlotType::Key => 4, _ => 0};
         let slot_index_bytes = slot_index.to_be_bytes().to_vec();
         let client_index_bytes = client_index.to_be_bytes().to_vec();
         let bytes = [
@@ -53,6 +53,7 @@ impl SendSlotRequestAttributes {
                     "Controller" => SlotType::Controller,
                     "Main" => SlotType::Main,
                     "Value" => SlotType::Value,
+                    "Key" => SlotType::Key,
                     _ => { return None; }
                 }
             } else {
@@ -105,7 +106,7 @@ impl SendSlotRequestAttributes {
     pub fn to_json(&self) -> String {
         let mut obj = HashMap::new();
         obj.insert(String::from("slot_type"), JsonValue::String(String::from(match self.slot_type {
-            SlotType::Controller => "Controller", SlotType::Main => "Main", SlotType::Value => "Value"
+            SlotType::Controller => "Controller", SlotType::Main => "Main", SlotType::Value => "Value", SlotType::Key => "Key"
         })));
         obj.insert(String::from("slot_index"), JsonValue::Number(self.slot_index.clone() as u64));
         obj.insert(String::from("slot_bytes"), JsonValue::Array(self.slot_bytes.clone().iter().map(|v| { JsonValue::Number(v.clone() as u64) }).collect::<Vec<_>>()));

@@ -28,6 +28,7 @@ fn main() -> std::io::Result<()> {
     let stdin = WelsibKeysPasswordInput::read()?;
 
     let keypair = Keypair::encode(arguments.get_secret_key_filename()?, stdin.input)?;
+    // welsib_smpc::dd(format!("Keypair: {:x?}", &keypair), "keypair");
 
     let config = Config::read(arguments.get_config_filename()?)?;
     welsib_smpc::d(format!("Config: {:#?}", &config));

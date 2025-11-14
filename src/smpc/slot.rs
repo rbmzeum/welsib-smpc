@@ -10,6 +10,7 @@ pub enum SlotType {
     Controller, // слоты сервера (контролёра, проверяющего, аудитора)
     Main, // слоты клиента без добаления конфиденциального значения к случайным частям
     Value, // слоты клиента с добавленным значением
+    Key, // слоты для совместимости с range proof
 }
 
 #[derive(Debug, Clone)]
@@ -27,6 +28,7 @@ impl Slot {
 
     pub fn decrypt(&self, decrypt_key: &U512) -> U512 {
         // println!("Decrypt slot len: {}", &self.bytes.len());
+        crate::dd(format!("DEBUG: (Slot::decrypt inner):\n{:x?}\n", &decrypt_key.get()[0]), "keypair");
         vec2u(welsib_agg_decrypt(&self.bytes, decrypt_key))
     }
 

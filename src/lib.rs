@@ -13,7 +13,7 @@ pub mod hash;
 pub mod d;
 pub mod range_prove;
 
-pub use crate::d::d;
+pub use crate::d::{d, dd};
 
 pub unsafe fn struct_to_bytes<T>(s: &T) -> &[u8] {
     std::slice::from_raw_parts(

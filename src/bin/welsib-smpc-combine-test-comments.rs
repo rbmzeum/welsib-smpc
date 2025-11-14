@@ -110,12 +110,12 @@ fn main() {
     let kx2_secret = create_random();
     let ky_secret = create_random();
     let kc_secret = create_random();
-    
+
     let kx1_parts = create_random_additive_parts(&kx1_secret, PARTS).unwrap();
     let kx2_parts = create_random_additive_parts(&kx2_secret, PARTS).unwrap();
     let ky_parts = create_random_additive_parts(&ky_secret, PARTS).unwrap();
     let kc_parts = create_random_additive_parts(&kc_secret, PARTS).unwrap();
-    
+
     let matrix_keys = vec![
         kx1_parts, // Строка для X₁: [345, 108, 151]
         kx2_parts, // Строка для X₂: [122, 263, 115]

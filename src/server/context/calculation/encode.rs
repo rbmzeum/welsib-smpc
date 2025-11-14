@@ -12,6 +12,8 @@ pub struct Encode {
     slot_type: Option<SlotType>,
     value: Option<U512>,
     public_key: Option<Point>,
+    control_public_key: Option<Point>,
+    index: Option<usize>,
 }
 
 impl Calculation for Encode {
@@ -21,6 +23,8 @@ impl Calculation for Encode {
             slot_type: None,
             value: None,
             public_key: None,
+            control_public_key: None,
+            index: None,
         }
     }
 
@@ -48,6 +52,13 @@ impl Calculation for Encode {
                             SlotType::Value => {
                                 // Сервер-контролёр не имеет возможности участвовать в шифровании значений
                             },
+                            SlotType::Key => {
+                                if let Some(index) = self.index {
+                                    if let Some(control_public_key) = &self.control_public_key {
+                                        smpc_field.set_random_client_range_key_slot(control_public_key.clone(), index, slot);
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -68,5 +79,13 @@ impl Encode {
     
     pub fn set_public_key(&mut self, public_key: Point) {
         self.public_key = Some(public_key)
+    }
+
+    pub fn set_control_public_key(&mut self, control_public_key: Point) {
+        self.control_public_key = Some(control_public_key)
+    }
+
+    pub fn set_index(&mut self, index: usize) {
+        self.index = Some(index)
     }
 }

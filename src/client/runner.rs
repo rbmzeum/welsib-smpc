@@ -22,21 +22,29 @@ impl Runner {
     }
 
     pub fn run(&mut self, planned: Arc<Mutex<VecDeque<Box<dyn Calculation>>>>) {
+        crate::dd(format!("DEBUG (run)"), "run");
         // создаёт отдельный процесс и по его завершению восстанавливает раннер
         let renew = |runners: Arc<Mutex<VecDeque<Runner>>>| {
+            crate::dd(format!("DEBUG (run, renew)"), "run");
             if let Ok(mut runners_guard) = runners.lock() {
                 runners_guard.push_front(Runner::new(runners.clone()));
             }
         };
 
         let has_renew = if let Ok(mut planned) = planned.lock() {
+            crate::dd(format!("DEBUG (run, has_renew)"), "run");
             if planned.len() > 0 {
+                crate::dd(format!("DEBUG (run, planned.len() > 0)"), "run");
                 if let Some(method) = planned.pop_back() {
+                    crate::dd(format!("DEBUG (run, method)"), "run");
                     let runners = self.runners.clone();
                     let threadid = self.threadid.clone();
                     let thread = self.thread.clone();
                     let handler = Some(spawn(move || -> std::io::Result<()> {
+                        crate::dd(format!("DEBUG (run, handler)"), "run");
+                        crate::dd(format!("DEBUG (run, before calculation)"), "run");
                         method.calculation();
+                        crate::dd(format!("DEBUG (run, after calculation)"), "run");
                         renew(runners);
                         Ok(())
                     }));

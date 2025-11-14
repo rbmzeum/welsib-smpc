@@ -39,27 +39,10 @@ impl Server {
         // Инициализация флагов
         let is_pub = Arc::new(Mutex::new(arguments.is_pub()));
 
-        // Определение количества участников
-        let pk_len = config.get_public_keys().len();
-        if pk_len <= 3 {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::Interrupted,
-                "Ошибка, участников не может быть меньше трёх: (1) сумма = (2) единственное слагаемое и (3) контролёр.",
-            ));
-        }
-        let participants = pk_len-1; // за исключением контролёра
-        // TODO: build SMPCField (let smpc_field = SMPCFieldBuilder::a(...).b(...).build())
-        // TODO: добавить вспомогательный метод get_id_by_point: BTreeMap<p: Point, id: usize>
-
         // Инициализация поля с шифрованными слотами для конфиденциальных многосторонних вычислений
         let smpc_field = Arc::new(Mutex::new(SMPCField::new()));
         let runners = Arc::new(Mutex::new(VecDeque::new()));
         let planned: Arc<Mutex<VecDeque<Box<dyn Calculation>>>> = Arc::new(Mutex::new(VecDeque::new()));
-
-        let smpc_field_copy = smpc_field.clone();
-        if let Ok(mut smpc_field) = smpc_field.lock() {
-            smpc_field.create_random_additive_parts(participants, config.get_public_keys(), planned.clone(), smpc_field_copy)?; // SlotType::Controller
-        }
 
         // DEBUG:
         // let calc1 = Encode;
@@ -118,23 +101,46 @@ impl Server {
         self.init_dispatcher()?; // Инициализация диспетчера
         self.init_runners(self.arguments.get_concurrency())?; // Инициализация раннеров
 
-        // Выполнить серверную публикацию слотов клиентам с предварительным индивидуальным шифрованием в зависимости от concurrency
-        loop {
-            if if let Ok(planned) = self.planned.lock() {
-                planned.len() > 0
-            } else {
-                false
-            } {
-                if let Some(mut runner) = self.runners.lock().unwrap().pop_back() {
-                    runner.run(self.planned.clone());
-                } else {
-                    // подождать освобождение раннера
-                    sleep(std::time::Duration::from_millis(100));
-                }
-            } else {
-                break;
-            }
+        // Определение количества участников
+        let pk_len = self.config.get_public_keys().len();
+        if pk_len <= 3 {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::Interrupted,
+                "Ошибка, участников не может быть меньше трёх: (1) сумма = (2) единственное слагаемое и (3) контролёр.",
+            ));
         }
+        let participants = pk_len-1; // за исключением контролёра
+        // TODO: build SMPCField (let smpc_field = SMPCFieldBuilder::a(...).b(...).build())
+        // TODO: добавить вспомогательный метод get_id_by_point: BTreeMap<p: Point, id: usize>
+
+        // TODO: 
+        // // Дополнительный ключ для объединения с RANGE proof
+        // let curve = EllipticCurve::make_curve_welsib();
+        // let additional_key = make_signing_key(&curve);
+        // let additional_key_parts = create_random_additive_parts(&additional_key, participants).unwrap();
+        // let mut additional_key_slots = vec![];
+        // for i in 0..participants {
+        //     let slot = Slot::encrypt(&additional_key_parts[i], &public_keys[i]); // TODO: сделать через очередь calculations в параллельных процессах
+        //     additional_key_slots.push(slot);
+        // }
+        // // TODO: self.run_runners();
+
+        // Дополнительный ключ для объединения с RANGE proof
+        let smpc_field_copy = self.smpc_field.clone();
+        if let Ok(smpc_field) = &mut self.smpc_field.lock() {
+            // println!("Step3");
+            // TODO: добавить оптимизацию, не добавлять в план шифрование собственного слота
+            smpc_field.create_range_key_additive_parts(participants, self.config.get_public_keys(), self.planned.clone(), smpc_field_copy)?;  // SlotType::Key
+        }
+        self.run_runners();
+
+        let smpc_field_copy = self.smpc_field.clone();
+        if let Ok(mut smpc_field) = self.smpc_field.lock() {
+            smpc_field.create_random_additive_parts(participants, self.config.get_public_keys(), self.planned.clone(), smpc_field_copy)?; // SlotType::Controller
+        }
+
+        // Выполнить серверную публикацию слотов клиентам с предварительным индивидуальным шифрованием в зависимости от concurrency
+        self.run_runners();
 
         let listener = Arc::new(Mutex::new(listener));
         let server = Arc::new(Mutex::new(self.clone()));
@@ -278,5 +284,24 @@ impl Server {
         }
 
         Ok(())
+    }
+
+    fn run_runners(&self) {
+        loop {
+            if if let Ok(planned) = self.planned.lock() {
+                planned.len() > 0
+            } else {
+                false
+            } {
+                if let Some(mut runner) = self.runners.lock().unwrap().pop_back() {
+                    runner.run(self.planned.clone());
+                } else {
+                    // подождать освобождение раннера
+                    sleep(std::time::Duration::from_millis(100));
+                }
+            } else {
+                break;
+            }
+        }
     }
 }

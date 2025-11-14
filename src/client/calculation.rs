@@ -1,5 +1,6 @@
 pub mod encode;
 pub mod decode;
+pub mod decode_key;
 pub mod aggregate;
 
 use crate::client::SMPCBuffer;

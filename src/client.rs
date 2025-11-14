@@ -21,7 +21,9 @@ use crate::smpc::request::receive_slot::ReceiveSlotRequestAttributes;
 use crate::smpc::request::SMPCRequest;
 // use crate::smpc::WelsibDtoInterface;
 use crate::client::calculation::decode::Decode;
+use crate::client::calculation::decode_key::DecodeKey;
 use crate::smpc::point_type::PointType;
+use crate::random::create_random_additive_parts;
 
 use std::net::TcpStream;
 use std::time::Duration;
@@ -33,7 +35,7 @@ use calculation::encode::Encode;
 use smpc_buffer::SMPCBuffer;
 use runner::Runner;
 use welsib_u512_ec::point::Point;
-use welsib_u512_ec::keys::welsib_make_verifying_key;
+use welsib_u512_ec::keys::{make_signing_key, welsib_make_verifying_key};
 use welsib_u512_ec::sign::welsib_u512_sum;
 use welsib_u512::u512::{U512, U512Add};
 use welsib_u512_ec::elliptic_curve::x2_mod::x2_mod;
@@ -94,6 +96,178 @@ impl Client {
             ));
         };
 
+        ///////////////////////////////////////////////////////////////////////////////
+        let public_keys = self.config.get_public_keys()[..self.config.get_public_keys().len() - 1].to_vec();
+
+        let mut sended_key_slots = vec![];
+        if public_keys.len() > 0 {
+            // Дополнительный ключ для объединения с RANGE proof
+            let smpc_buffer_copy = self.smpc_buffer.clone();
+            if let Ok(smpc_buffer) = &mut self.smpc_buffer.lock() {
+                // println!("Step3");
+                // TODO: добавить оптимизацию, не добавлять в план шифрование собственного слота
+                smpc_buffer.create_range_key_additive_parts(participants, self.config.get_public_keys(), self.planned.clone(), smpc_buffer_copy)?;  // SlotType::Key
+            }
+            self.run_runners();
+
+            // Отправка SlotType::Key слотов
+            crate::dd(format!("Отправка SlotType::Key слотов\n{:?}", &participants), "key");
+            loop {
+                // if sended_key_slots.len() == public_keys.len() - 1 {
+                if sended_key_slots.len() == public_keys.len() {
+                    // println!("Step13(key)");
+                    break;
+                }
+                for (i, p) in public_keys.iter().enumerate() {
+                    // println!("Step14(key)");
+                    // TODO: собственную часть range ключа не обязательно отправлять на сервер и получать с сервера
+                    if sended_key_slots.contains(&i) /*|| self.keypair.get_public_key() == *p*/ {
+                        // Игнорировать отправленные
+                        // Игнорировать отправку на сервер собственного слота (для вычислений своей части)
+                        continue;
+                    }
+                    if let Ok(smpc_buffer) = self.smpc_buffer.lock() {
+                        // println!("Step15(key)");
+                        // let slot = Some(additional_key_slots[i].clone()); // TODO: использовать smpc_buffer и методы
+                        let slot = smpc_buffer.get_random_range_slot_by_public_key(p);
+                        if let Some(slot) = slot {
+                            // println!("Step16(key)");
+                            crate::dd(format!("send_slot: {:?}\n{:x?}", &i, &p.x.get()[0]), "send_slot_key");
+                            match self.send_slot(SlotType::Key, &slot, i, &self.keypair) {
+                                Ok(()) => {
+                                    // Слот отправлен успешно
+                                    // crate::dd(format!("Слот SlotType::Key отправлен успешно {:#?}", &i), "key");
+                                    sended_key_slots.push(i);
+                                },
+                                Err(e) => {
+                                    crate::d(format!("Ошибка: отправка слота-ключа не увенчалась успехом и будет повторена\n{:?}", e));
+                                    sleep(std::time::Duration::from_millis(10)); // TODO: attempts (counter)
+                                },
+                            };
+                            // println!("Step18(key)");
+                        }
+                    }
+                }
+                // println!("Step19(key)");
+            }
+
+            // TODO: Получение SlotType::Key слотов остальных участников
+            crate::dd(format!("Получение SlotType::Key слотов остальных участников"), "key");
+            // ...
+            // match self.receive_slot(SlotType::Key, position, &self.keypair) {
+            // ...
+            // let mut calc = DecodeKey::new(self.smpc_buffer.clone());
+            // ...
+
+            // ================================================================================
+            // Получение Key слотов остальных клиентов
+            // let public_keys = self.config.get_public_keys()[..self.config.get_public_keys().len() - 1].to_vec();
+            let public_keys = self.config.get_public_keys()[..self.config.get_public_keys().len()].to_vec(); // не исключается ключ контролёра (не вычитается единица)
+            let mut received_key_slots = vec![];
+            loop {
+                // sleep(std::time::Duration::from_millis(100)); // DEBUG: duration
+                // println!("===========================");
+                // if received_key_slots.len() == public_keys.len() - 1 {
+                if received_key_slots.len() == public_keys.len() {
+                    // println!("Step33");
+                    // процесс выполнен, выйти из цикла
+                    break;
+                }
+                for (position, public_key) in public_keys.iter().enumerate() {
+                    // TODO: собственную часть range ключа не обязательно отправлять на сервер и получать с сервера
+                    // if *public_key == self.keypair.get_public_key() {
+                    //     // println!("Step31");
+                    //     // Пропустить 
+                    //     continue;
+                    // }
+                    if received_key_slots.contains(&position) {
+                        // Не загружать загруженные слоты
+                        continue;
+                    }
+                    // TODO: учитывать команду reset от других клиентов и сервера, начиная принимать слоты клиента и сервера снова (в зависимости типа ресета, определённого клиента или сервера)
+                    crate::dd(format!("DEBUG: decode key"), "decode_key");
+                    crate::dd(format!("receive_slot: {:?}\np:{:x?}\ns:{:x?}\n", &position, &public_key.x.get()[0], &self.keypair.get_secret_key().get()[0]), "receive_slot_key");
+                    match self.receive_slot(SlotType::Key, position, &self.keypair) {
+                        Ok(slot) => {
+                            crate::dd(format!("DEBUG: decode key (slot):\n{:?}", &slot), "decode_key");
+                            if let Ok(mut smpc_buffer) = self.smpc_buffer.lock() {
+                                smpc_buffer.insert_key_slot(&slot);
+                                received_key_slots.push(position);
+                                // Добавить self.planned запланированное декодирование слота
+                                if let Ok(mut planned) = self.planned.lock() {
+                                    let mut calc = DecodeKey::new(self.smpc_buffer.clone());
+                                    calc.set_slot(slot.clone());
+                                    calc.set_slot_position(position);
+                                    calc.set_decode_key(self.keypair.get_secret_key());
+                                    planned.push_front(Box::new(calc));
+                                    crate::dd(format!("Planned decode (pushed) {position}"), "decode_key");
+                                    crate::dd(format!("Planned decode (pushed) {position}\n{:x?}", &public_key.x.get()[0]), "receive_slot_key");
+                                }
+                            } else {
+                                crate::dd(format!("Ошибка: нет доступа к smpc_buffer"), "key");
+                                sleep(std::time::Duration::from_millis(100));
+                            }
+                        },
+                        Err(e) => {
+                            crate::dd(format!("Ошибка: не удалось получить серверный Key слот\n{:?}\nposition: {position}\n", e), "key");
+                            sleep(std::time::Duration::from_millis(100));
+                        },
+                    };
+                }
+            }
+
+            crate::dd(format!("DEBUG: Загрузка с сервера Key слотов завершена успешно"), "key");
+
+            // Запустить декодирование в параллельных процессах с использованием очереди свободных раннеров
+            self.run_runners();
+
+            // TODO: дождаться завершения декодирования
+
+            crate::dd(format!("DEBUG: Декодирование Key слотов завершено успешно"), "key");
+            // ================================================================================
+
+            // TODO: Расшифровка и агрегация SlotType::Key в ключ предназначенный для использования в алгоритме слияния wsmpc с range proof
+        }
+
+        // if let Some(range_agg_key) = get_agg_received_key
+        // TODO: smpc_buffer.set_random_nonce_sum(range_agg_key);
+        // if let Ok(smpc_buffer) = &mut self.smpc_buffer.lock() {
+        //     // TODO: Синхронизировать асинхронное выполнение вычислений
+        //     crate::dd(format!("DEBUG: agg_received_key (before)"), "run");
+        //     smpc_buffer.agg_received_key(self.config.get_public_keys());
+        //     crate::dd(format!("DEBUG: agg_received_key (after)"), "run");
+        // }
+
+        loop {
+            sleep(std::time::Duration::from_millis(100));
+            if let Ok(smpc_buffer) = &mut self.smpc_buffer.lock() {
+                crate::dd(format!("DEBUG agg_received_key:\n{:?}", &smpc_buffer.get_range_received_keys()), "agg_received_key");
+                if let Some(range_received_keys) = &smpc_buffer.get_range_received_keys() {
+                    crate::dd(format!("DEBUG agg_received_key:\n{:?}", &range_received_keys), "agg_received_key");
+                    let mut keys: Vec<U512> = vec![];
+                    if range_received_keys.len() == self.config.get_public_keys().len() {
+                        for (_, key) in range_received_keys {
+                            keys.push(key.clone());
+                        }
+                        // smpc_buffer.set_random_nonce_sum(welsib_u512_sum(range_received_keys.iter().map(|(_, v)| v.clone()).collect::<Vec<U512>>()));
+                        crate::dd(format!("DEBUG set_random_nonce_sum:\n{:?}", &keys), "agg_received_key");
+                        smpc_buffer.set_random_nonce_sum(welsib_u512_sum(keys));
+                        break;
+                    } else {
+                        crate::dd(format!("DEBUG await: range_received_keys.len() == self.config.get_public_keys().len():\n{:?} == {:?}", &range_received_keys.len(), &self.config.get_public_keys().len()), "agg_received_key");
+                        sleep(std::time::Duration::from_millis(100));
+                    }
+                } else {
+                    crate::dd(format!("DEBUG agg_received_key (None):\n{:?}", &smpc_buffer.get_range_received_keys()), "agg_received_key");
+                    sleep(std::time::Duration::from_millis(100));
+                }
+            } else {
+                crate::dd(format!("DEBUG smpc_buffer (locked)"), "agg_received_key");
+                sleep(std::time::Duration::from_millis(100));
+            }
+        }
+        ///////////////////////////////////////////////////////////////////////////////
+
         // println!("Step1");
         if self.arguments.is_sum() {
             // println!("Step2");
@@ -109,11 +283,12 @@ impl Client {
             self.run_runners();
 
             // Отправить на сервер Main слоты для участников за исключением контролёра
-            let public_keys = self.config.get_public_keys()[..self.config.get_public_keys().len() - 1].to_vec();
             let mut sended_slots = vec![];
             // println!("Step11");
             if public_keys.len() > 0 {
+                // Отправка SlotType::Main слотов
                 loop {
+                    sleep(std::time::Duration::from_millis(100));
                     // sleep(std::time::Duration::from_millis(100)); // DEBUG: duration
                     // println!("Step12");
                     if sended_slots.len() == public_keys.len() - 1 {
@@ -155,6 +330,7 @@ impl Client {
 
         // Получение серверного Controller слота
         loop {
+            sleep(std::time::Duration::from_millis(100));
             // sleep(std::time::Duration::from_millis(100)); // DEBUG: duration
             match self.get_position(&self.keypair.get_public_key()) { // определить собственную позицию
                 Ok(position) => {
@@ -184,6 +360,7 @@ impl Client {
         // Получение Main слота (владельца суммы) клиентом не являющимся владельцем суммы (т.е. запущенным без параметра --sum)
         if !self.arguments.is_sum() {
             loop {
+                sleep(std::time::Duration::from_millis(100));
                 // sleep(std::time::Duration::from_millis(100)); // DEBUG: duration
                 match self.get_position(&self.keypair.get_public_key()) { // определить собственную позицию
                     Ok(position) => {
@@ -231,7 +408,7 @@ impl Client {
                 smpc_buffer.get_random_nonce_orig_value()
             };
             let c = smpc_buffer.get_controller_random_slot_value(&self.keypair.get_secret_key());
-            let r = smpc_buffer.get_random_nonce_sum();
+            let r = smpc_buffer.get_random_nonce_sum().unwrap();
             let v = U512::from_u64(self.value);
 
             let agg_sum = if let Some(m) = m {
@@ -355,7 +532,7 @@ impl Client {
                         }
                     },
                     Err(e) => {
-                        crate::d(format!("Ошибка: не удалось получить серверный Controller слот\n{:?}", e));
+                        crate::d(format!("Ошибка: не удалось получить серверный Value слот\n{:?}", e));
                         sleep(std::time::Duration::from_millis(100));
                     },
                 };
@@ -468,27 +645,27 @@ impl Client {
     }
 
     fn run_runners(&self) {
-        crate::d(format!("Run runners:"));
+        crate::dd(format!("Run runners:"), "run_runners");
         loop {
-            crate::d(format!("Step4"));
+            crate::dd(format!("Step4"), "run_runners");
             if if let Ok(planned) = self.planned.lock() {
-                crate::d(format!("Step5 {:#?} {}", planned.len() > 0, &planned.len()));
+                crate::dd(format!("Step5 {:#?} {}", planned.len() > 0, &planned.len()), "run_runners");
                 planned.len() > 0
             } else {
-                crate::d(format!("Step6"));
+                crate::dd(format!("Step6"), "run_runners");
                 false
             } {
-                crate::d(format!("Step7"));
+                crate::dd(format!("Step7"), "run_runners");
                 if let Some(mut runner) = self.runners.lock().unwrap().pop_back() {
-                    crate::d(format!("Step8 (RUN)"));
+                    crate::dd(format!("Step8 (RUN)"), "run_runners");
                     runner.run(self.planned.clone());
                 } else {
-                    crate::d(format!("Step9"));
+                    crate::dd(format!("Step9"), "run_runners");
                     // подождать освобождение раннера
                     sleep(std::time::Duration::from_millis(100));
                 }
             } else {
-                crate::d(format!("Step10"));
+                crate::dd(format!("Step10"), "run_runners");
                 break;
             }
         }
@@ -620,20 +797,20 @@ impl Client {
             };
 
             let request_attr = ReceiveSlotRequestAttributes::new(slot_type, i, client_index, handshake_response_attributes.nonce_sig, &keypair);
-            crate::d(format!("DEBUG ReceiveSlotRequestAttributes:\n{:?}", &request_attr));
+            crate::dd(format!("DEBUG ReceiveSlotRequestAttributes:\n{:?}", &request_attr), "receive_slot");
             // println!("ReceiveSlotRequestAttributes JSON {}", &request_attr.to_json::<ReceiveSlotRequestAttributes>());
             let smpc_receive_slot_request = SMPCRequest::new(
                 String::from("receive"),
                 request_attr.to_json(),
             );
             let receive_slot_response = self.send_request(smpc_receive_slot_request)?;
-            crate::d(format!("Receive slot response: {:?}", &receive_slot_response));
+            crate::dd(format!("Receive slot response: {:?}", &receive_slot_response), "receive_slot");
             let receive_slot_response_attributes = ReceiveSlotResponseAttributes::from_json(&receive_slot_response.attributes);
             if let Some(receive_slot_response_attributes) = receive_slot_response_attributes {
                 // Убедиться, что подпись клиента в ответе соответствует актуальной подписи клиента в запросе (не MiTM, и не из кеша)
                 if receive_slot_response_attributes.is_success(&request_attr.signature) {
                     // Success
-                    crate::d(format!("DEBUG receive_slot_response_attributes:\n{:?}", &receive_slot_response_attributes));
+                    crate::dd(format!("DEBUG receive_slot_response_attributes:\n{:?}", &receive_slot_response_attributes), "receive_slot");
                     return Ok(receive_slot_response_attributes.get_slot());
                 }
             }
@@ -658,7 +835,7 @@ impl Client {
         let mut attempts_request = 0; // счётчик попыток отправки данных
 
         loop {
-            crate::d(format!("Try connect..."));
+            crate::dd(format!("Try connect..."), "send_request");
             match TcpStream::connect(&addr) {
                 Ok(stream) => {
                     match stream.set_write_timeout(Some(Duration::from_secs(30))) {
@@ -668,7 +845,7 @@ impl Client {
                                     let mut welsib_stream = WelsibStream {
                                         tcp_stream: Some(stream),
                                     };
-                                    crate::d(format!("DEBUG welsib_stream.write(&request.to_frame()):\n{:?}", &request.to_frame()));
+                                    crate::dd(format!("DEBUG welsib_stream.write(&request.to_frame()):\n{:?}", &request.to_frame()), "send_request");
                                     welsib_stream.write(&request.to_frame())?; // request
 
                                     let mut attempts_response = 0; // счётчик попыток приёма данных
@@ -676,22 +853,22 @@ impl Client {
                                     loop {
                                         let response = welsib_stream.read(); // response
                                         if let Some(frame) = &response {
-                                            crate::d(format!("Response (frame): {:?}", &frame));
+                                            crate::dd(format!("Response (frame): {:?}", &frame), "send_request");
                                             let response = SMPCResponse::from_frame(frame);
-                                            crate::d(format!("Response: {:#?}", &response));
+                                            crate::dd(format!("Response: {:#?}", &response), "send_request");
                                             if let Some(response) = response {
                                                 let public_keys = self.config.get_public_keys();
                                                 let verify_key = public_keys[public_keys.len()-1].clone(); // последний ключ конфига -- публичный ключ контролёра (аудитора, проверяющего)
                                                 if response.verify(&verify_key) {
                                                     return Ok(response);
                                                 } else {
-                                                    crate::d(format!("Response is not verified"));
+                                                    crate::dd(format!("Response is not verified"), "send_request");
                                                 }
                                             } else {
-                                                crate::d(format!("Response is None"));
+                                                crate::dd(format!("Response is None"), "send_request");
                                             }
                                         } else {
-                                            crate::d(format!("Empty response"));
+                                            crate::dd(format!("Empty response"), "send_request");
                                         }
                                         sleep(Duration::from_millis(pauses[attempts_response]));
                                         if attempts_response < 4 {
@@ -699,24 +876,24 @@ impl Client {
                                         } else {
                                             return Err(std::io::Error::new(
                                                 std::io::ErrorKind::Interrupted,
-                                                "Ошибка, сервер не вернул ответ на запрос за разумное время",
+                                                "Ошибка, сервер не вернул ответ на запрос за разумное время (inner)",
                                             ));
                                         }
                                         // try read after 0, 10, 100, 1000 or 10000 milleseconds (after 4 attempts try every 10 sec)
                                     }
                                 }
                                 Err(e) => {
-                                    crate::d(format!("Error: TcpStream set read timeout: {:#?}", e));
+                                    crate::dd(format!("Error: TcpStream set read timeout: {:#?}", e), "send_request");
                                 }
                             };
                         }
                         Err(e) => {
-                            crate::d(format!("Error: TcpStream set write timeout: {:#?}", e));
+                            crate::dd(format!("Error: TcpStream set write timeout: {:#?}", e), "send_request");
                         }
                     };
                 }
                 Err(e) => {
-                    crate::d(format!("Error connection: {:#?}", e));
+                    crate::dd(format!("Error connection: {:#?}", e), "send_request");
                 }
             }
 
@@ -726,7 +903,7 @@ impl Client {
             } else {
                 return Err(std::io::Error::new(
                     std::io::ErrorKind::Interrupted,
-                    "Ошибка, сервер не вернул ответ на запрос за разумное время",
+                    "Ошибка, сервер не вернул ответ на запрос за разумное время (outer)",
                 ));
             }
             // try read after 0, 10, 100, 1000 or 10000 milleseconds (after 4 attempts try every 10 sec)

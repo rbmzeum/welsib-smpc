@@ -10,7 +10,7 @@ use welsib_u512_ec::elliptic_curve::EllipticCurve;
 use welsib_u512_ec::agg_crypt::EllipticCurveCrypt;
 use welsib_u512_ec::keys::{make_signing_key, make_verifying_key};
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct Keypair {
     secret_key: U512,
     public_key: Point
