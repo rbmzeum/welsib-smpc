@@ -411,6 +411,14 @@ impl Client {
             let r = smpc_buffer.get_random_nonce_sum().unwrap();
             let v = U512::from_u64(self.value);
 
+            // ========================================
+            let (c_keys, c_points, confidential_value, rv) = smpc_buffer.do_range_proof(self.value).unwrap();
+            // TODO: Использование новых формул для совместного доказательства с range proof
+            // 1. Разделение значения на части для участников
+            // 2. Обмен значениями в виде отдельных рандомизированных битов из доказательства диапазона
+            // 3. Обмен дополнительными значениями
+            // ========================================
+
             let agg_sum = if let Some(m) = m {
                 if let Some(c) = c {
                     // v + r + m + c

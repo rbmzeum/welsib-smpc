@@ -14,6 +14,11 @@ use welsib_u512_ec::elliptic_curve::x2_mod::x2_mod;
 use welsib_u512_ec::elliptic_curve::EllipticCurve;
 use std::thread::sleep;
 
+use crate::range_prove::{range_prove, range_verify, range_point_from_bits, rr_i};
+use welsib_u512_ec::elliptic_curve::add_mod::add_mod;
+use welsib_u512_ec::elliptic_curve::sub_mod::sub_mod;
+use welsib_u512_ec::elliptic_curve::mul_mod::mul_mod;
+
 pub struct SMPCBuffer {
     // ключи range proof
     random_range_key: U512,
@@ -334,6 +339,19 @@ impl SMPCBuffer {
 
     pub fn set_random_nonce_sum(&mut self, random_nonce_sum: U512) {
         self.random_nonce_sum = Some(random_nonce_sum)
+    }
+
+    pub fn do_range_proof(&mut self, value: u64) -> Option<(Vec<U512>, Vec<Point>, Point, U512)> {
+        let curve = EllipticCurve::make_curve_welsib();
+        const RANGE: usize = 128;
+        if let Some(random_nonce_sum) = self.random_nonce_sum {
+            // TODO: оптимизировать и распараллелить выполнение range_prove
+            let (c_keys, c_points, confidential_value) = range_prove(&curve, value as u128, RANGE, &random_nonce_sum).unwrap();
+            let rv = mul_mod(&rr_i(&c_keys, &curve.q), &random_nonce_sum, &curve.q).unwrap();
+            Some((c_keys, c_points, confidential_value, rv))
+        } else {
+            None
+        }
     }
 
     // Возвращает собственное Main значение владельца суммы
