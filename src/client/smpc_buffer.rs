@@ -14,10 +14,13 @@ use welsib_u512_ec::elliptic_curve::x2_mod::x2_mod;
 use welsib_u512_ec::elliptic_curve::EllipticCurve;
 use std::thread::sleep;
 
-use crate::range_prove::{range_prove, range_verify, range_point_from_bits, rr_i};
+use crate::range_prove::{range_prove, range_verify, range_point_from_bit_proofs, rr_i};
 use welsib_u512_ec::elliptic_curve::add_mod::add_mod;
 use welsib_u512_ec::elliptic_curve::sub_mod::sub_mod;
 use welsib_u512_ec::elliptic_curve::mul_mod::mul_mod;
+
+use welsib_u512_ec::keys::make_verifying_key;
+use crate::range_prove::BitProve;
 
 pub struct SMPCBuffer {
     // ключи range proof
@@ -37,9 +40,24 @@ pub struct SMPCBuffer {
     sum_random_slot_value: Option<U512>, // расшифрованное значение слота (TOSO: при reset надо сбрасывать в None)
     // TODO: матрица
     // TODO: список
+    random_client_key_part: Option<U512>,
+    random_client_point_part: Option<Point>,
+    random_client_range_points_part: Option<Vec<Point>>,
     random_client_sum: Option<U512>,
     random_client_orig_values: Option<Vec<U512>>,
     random_client_orig_slots: Option<BTreeMap<U512, Slot>>, // key: Point.x, value: Slot
+
+    // Для хранения доказательств диапазона
+    client_bit_proofs: Option<Vec<BitProve>>,
+    client_range_verify_key: Option<Point>,  // h из range_prove
+    client_confidential_value: Option<Point>, // confidential_value из range_prove
+    
+    // Для владельца суммы
+    // sum_bit_proofs: Option<Vec<BitProve>>,
+    // sum_range_verify_key: Option<Point>,
+    // sum_confidential_value: Option<Point>,
+    // sum_rvyp_point: Option<Point>,  // rvyp для владельца суммы
+    // client_rvyp_point: Option<Point>,
 
     // agg_sum: Option<U512>, // сумма Controller + Main + Random + Value для разделения на смешанные случайные значения с исходным
     // agg_values: Option<Vec<U512>>,
@@ -66,9 +84,25 @@ impl SMPCBuffer {
             controller_random_slot_value: None,
             sum_random_slot: None,
             sum_random_slot_value: None,
+            random_client_key_part: None,
+            random_client_point_part: None,
+            random_client_range_points_part: None,
             random_client_sum: None,
             random_client_orig_values: None,
             random_client_orig_slots: None,
+
+            // Для хранения доказательств диапазона
+            client_bit_proofs: None,
+            client_range_verify_key: None,  // h из range_prove
+            client_confidential_value: None, // confidential_value из range_prove
+            
+            // Для владельца суммы
+            // client_bit_proofs: None,
+            // sum_range_verify_key: None,
+            // sum_confidential_value: None,
+            // sum_rvyp_point: None,  // rvyp для владельца суммы
+            // client_rvyp_point: None,
+
             // agg_sum: None,
             // agg_values: None,
             // agg_slots: None,
@@ -313,6 +347,18 @@ impl SMPCBuffer {
         self.sum_random_slot = Some(slot.clone());
     }
 
+    pub fn set_random_client_key_part(&mut self, random_client_key_part: &U512) {
+        self.random_client_key_part = Some(random_client_key_part.clone());
+    }
+
+    pub fn set_random_client_point_part(&mut self, random_client_point_part: &Point) {
+        self.random_client_point_part = Some(random_client_point_part.clone());
+    }
+
+    pub fn set_random_client_range_points_part(&mut self, random_client_range_points_part: &Vec<Point>) {
+        self.random_client_range_points_part = Some(random_client_range_points_part.clone());
+    }
+
     pub fn set_random_client_sum(&mut self, random_client_sum: &U512) {
         self.random_client_sum = Some(random_client_sum.clone());
     }
@@ -341,14 +387,27 @@ impl SMPCBuffer {
         self.random_nonce_sum = Some(random_nonce_sum)
     }
 
-    pub fn do_range_proof(&mut self, value: u64) -> Option<(Vec<U512>, Vec<Point>, Point, U512)> {
+    // pub fn do_range_proof(&mut self, value: u64) -> Option<(Vec<U512>, Vec<Point>, Point, U512)> {
+    //     let curve = EllipticCurve::make_curve_welsib();
+    //     const RANGE: usize = 128;
+    //     if let Some(random_nonce_sum) = self.random_nonce_sum {
+    //         // TODO: оптимизировать и распараллелить выполнение range_prove
+    //         let (c_keys, c_points, confidential_value) = range_prove(&curve, value as u128, RANGE, &random_nonce_sum).unwrap();
+    //         let rv = mul_mod(&rr_i(&c_keys, &curve.q), &random_nonce_sum, &curve.q).unwrap();
+    //         Some((c_keys, c_points, confidential_value, rv))
+    //     } else {
+    //         None
+    //     }
+    // }
+
+    pub fn do_range_proof(&mut self, value: u64) -> Option<(Vec<U512>, Vec<BitProve>, Point, U512, Point)> {
         let curve = EllipticCurve::make_curve_welsib();
         const RANGE: usize = 128;
         if let Some(random_nonce_sum) = self.random_nonce_sum {
             // TODO: оптимизировать и распараллелить выполнение range_prove
-            let (c_keys, c_points, confidential_value) = range_prove(&curve, value as u128, RANGE, &random_nonce_sum).unwrap();
+            let (c_keys, bit_proofs, confidential_value, h) = range_prove(&curve, value as u128, RANGE, &random_nonce_sum).unwrap();
             let rv = mul_mod(&rr_i(&c_keys, &curve.q), &random_nonce_sum, &curve.q).unwrap();
-            Some((c_keys, c_points, confidential_value, rv))
+            Some((c_keys, bit_proofs, confidential_value, rv, h))
         } else {
             None
         }
@@ -381,6 +440,42 @@ impl SMPCBuffer {
         }
     }
 
+    pub fn set_client_bit_proofs(&mut self, bit_proofs: &Vec<BitProve>) {
+        self.client_bit_proofs = Some(bit_proofs.clone());
+    }
+
+    pub fn set_client_range_verify_key(&mut self, h: &Point) {
+        self.client_range_verify_key = Some(h.clone());
+    }
+
+    pub fn get_client_range_verify_key(&mut self) -> Option<Point> {
+        self.client_range_verify_key.clone()
+    }
+
+    pub fn set_client_confidential_value(&mut self, confidential_value: &Point) {
+        self.client_confidential_value = Some(confidential_value.clone());
+    }
+
+    // pub fn set_client_rvyp_point(&mut self, point: &Point) {
+    //     self.client_rvyp_point = Some(point.clone());
+    // }
+
+    // pub fn get_client_rvyp_point(&self) -> Option<Point> {
+    //     self.client_rvyp_point.clone()
+    // }
+
+    pub fn get_random_client_point_part(&self) -> Option<Point> {
+        self.random_client_point_part.clone()
+    }
+
+    // pub fn get_sum_bit_proofs(&self) -> Option<Vec<BitProve>> {
+    //     self.sum_bit_proofs.clone()
+    // }
+
+    pub fn get_client_bit_proofs(&self) -> Option<Vec<BitProve>> {
+        self.client_bit_proofs.clone()
+    }
+
     pub fn make_value_matrix(&self, client_count: usize) -> Option<U512> {
         // FIXME: выявить наличие ошибок в этом методе
         if let Some(received_values) = &self.received_values {
@@ -398,44 +493,6 @@ impl SMPCBuffer {
             }
         } else {
             // println!("DEBUG (make_value_matrix: self.received_values is None)");
-            None
-        }
-    }
-
-    pub fn make_value_list(&self, value: U512) -> Option<U512> {
-        let curve = EllipticCurve::make_curve_welsib(); // TODO: определять на основе информации из файла конфигурации
-        // p = r + 2 * n + c + 2 * v
-        // c: self.get_controller_random_slot_value()
-        // r: self.get_random_nonce_sum()
-        // n: self.get_sum_random_slot_value()
-        // v: value
-        if let Some(controller_random_slot_value) = &self.controller_random_slot_value {
-            if let Some(sum_random_slot_value) = &self.sum_random_slot_value {
-                let keys = [
-                    controller_random_slot_value.clone(), // c
-                    self.get_random_nonce_sum().unwrap(), // r
-                    x2_mod(&sum_random_slot_value, &curve.p).unwrap(), // n
-                    x2_mod(&value, &curve.p).unwrap(), // v
-                ].to_vec();
-                Some(welsib_u512_sum(keys))
-            } else {
-                if let Some(random_nonce_orig_values) = &self.random_nonce_orig_values {
-                    if let Some(random_nonce_orig_values_last) = random_nonce_orig_values.get(random_nonce_orig_values.len()-1) {
-                        let keys = [
-                            controller_random_slot_value.clone(), // c
-                            self.get_random_nonce_sum().unwrap(), // r
-                            x2_mod(&random_nonce_orig_values_last, &curve.p).unwrap(), // n
-                            x2_mod(&value, &curve.p).unwrap(), // v
-                        ].to_vec();
-                        Some(welsib_u512_sum(keys))
-                    } else {
-                        None
-                    }
-                } else {
-                    None
-                }
-            }
-        } else {
             None
         }
     }

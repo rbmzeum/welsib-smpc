@@ -11,6 +11,7 @@ use crate::smpc::response::handshake::HandshakeResponseAttributes;
 use crate::smpc::response::send_slot::SendSlotResponseAttributes;
 use crate::smpc::response::send_point::SendPointResponseAttributes;
 use crate::smpc::response::receive_slot::ReceiveSlotResponseAttributes;
+use crate::smpc::response::send_bit_proof::SendBitProofResponseAttributes;
 use crate::smpc::response::SMPCResponse;
 use crate::smpc::slot::{Slot, SlotType};
 use arguments::WelsibClientArguments;
@@ -18,12 +19,14 @@ use crate::smpc::request::handshake::HandshakeRequestAttributes;
 use crate::smpc::request::send_slot::SendSlotRequestAttributes;
 use crate::smpc::request::send_point::SendPointRequestAttributes;
 use crate::smpc::request::receive_slot::ReceiveSlotRequestAttributes;
+use crate::smpc::request::send_bit_proof::SendBitProofRequestAttributes;
 use crate::smpc::request::SMPCRequest;
 // use crate::smpc::WelsibDtoInterface;
 use crate::client::calculation::decode::Decode;
 use crate::client::calculation::decode_key::DecodeKey;
 use crate::smpc::point_type::PointType;
 use crate::random::create_random_additive_parts;
+use crate::range_prove::{range_prove, range_verify, range_point_from_bit_proofs, BitProve};
 
 use std::net::TcpStream;
 use std::time::Duration;
@@ -35,10 +38,13 @@ use calculation::encode::Encode;
 use smpc_buffer::SMPCBuffer;
 use runner::Runner;
 use welsib_u512_ec::point::Point;
-use welsib_u512_ec::keys::{make_signing_key, welsib_make_verifying_key};
+use welsib_u512_ec::keys::{make_signing_key, welsib_make_verifying_key, make_verifying_key};
 use welsib_u512_ec::sign::welsib_u512_sum;
 use welsib_u512::u512::{U512, U512Add};
 use welsib_u512_ec::elliptic_curve::x2_mod::x2_mod;
+use welsib_u512_ec::elliptic_curve::mul_mod::mul_mod;
+use welsib_u512_ec::elliptic_curve::add_mod::add_mod;
+use welsib_u512_ec::elliptic_curve::sub_mod::sub_mod;
 use welsib_u512_ec::elliptic_curve::EllipticCurve;
 use welsib_u512_ec::agg_crypt::EllipticCurveCrypt;
 use std::fs;
@@ -74,7 +80,7 @@ impl Client {
         })
     }
 
-    pub fn run(&mut self) -> std::io::Result<(Point, Point)> {
+    pub fn run(&mut self) -> std::io::Result<(Point, Point, Vec<BitProve>)> {
         self.init_runners(self.arguments.get_concurrency())?; // Инициализация раннеров
 
         // Определение количества участников
@@ -411,18 +417,73 @@ impl Client {
             let r = smpc_buffer.get_random_nonce_sum().unwrap();
             let v = U512::from_u64(self.value);
 
+            // TODO: здесь добавить вычисление ключа h и отправку его контролёру
+            // В клиенте нужно добавить верификацию доказательства диапазона после do_range_proof
+            // Например:
+            // let curve = EllipticCurve::make_curve_welsib();
+            // let range_agg_key = smpc_buffer.get_random_nonce_sum().unwrap(); // Это аналог y_agg_secret_key в тесте
+            // Создаем публичный ключ h для верификации (аналог make_verifying_key)
+            // let h_value = add_mod(&rv, &U512::from_u64(self.value), &curve.q).unwrap();
+            // let h = make_verifying_key(&curve, &h_value).unwrap();
+            // Верификация доказательства диапазона
+            // assert!(range_verify(&curve, &bit_proofs, RANGE, &h, confidential_value));
+            // ...
+
             // ========================================
-            let (c_keys, c_points, confidential_value, rv) = smpc_buffer.do_range_proof(self.value).unwrap();
+            // let (c_keys, c_points, confidential_value, rv) = smpc_buffer.do_range_proof(self.value/*, self.concurrency */).unwrap(); // TODO: сделать асинхронным и запуск через self.run_runners()
+            let (c_keys, bit_proofs, confidential_value, rv, h) = smpc_buffer.do_range_proof(self.value/*, self.concurrency */).unwrap(); // TODO: сделать асинхронным и запуск через self.run_runners()
+
+            // Сохранить доказательства диапазона
+            smpc_buffer.set_client_bit_proofs(&bit_proofs);
+            smpc_buffer.set_client_range_verify_key(&h);
+            smpc_buffer.set_client_confidential_value(&confidential_value);
+
+            let curve = EllipticCurve::make_curve_welsib(); // TODO: вынести в конфигурацию
+            // TODO: при создании bit_proofs вернуть публичные ключи для range_verify
             // TODO: Использование новых формул для совместного доказательства с range proof
             // 1. Разделение значения на части для участников
             // 2. Обмен значениями в виде отдельных рандомизированных битов из доказательства диапазона
             // 3. Обмен дополнительными значениями
             // ========================================
+            // TODO:
+            // 1. отправить h на сервер контролёра (ключ для верификации диапазона бит)
+            // 2. send_bit_proof_point
+            // ========================================
+            if !self.arguments.is_sum() {
+                let mut is_point_range_verification_key_sended = false;
+                loop {
+                    if !is_point_range_verification_key_sended {
+                        match self.send_point(&h, PointType::RangeVerificationKey, self_position.clone(), &self.keypair) {
+                            Ok(()) => {
+                                crate::d(format!("Отправка клиентского ключа point_range_verification_key совершена успешно"));
+                                is_point_range_verification_key_sended = true;
+                            },
+                            Err(_e) => {
+                                crate::d(format!("Error: не удалось отправить point_range_verification_key"));
+                                sleep(std::time::Duration::from_millis(100));
+                            },
+                        }
+                    }
+
+                    if is_point_range_verification_key_sended {
+                        break;
+                    }
+                }
+            }
+            // ========================================
 
             let agg_sum = if let Some(m) = m {
                 if let Some(c) = c {
-                    // v + r + m + c
-                    welsib_u512_sum(vec![v, r, m, c]) // TODO: curve подключать из конфигурации (не хардкодить)
+                    // Новая формула совместимая с доказательством range proof
+                    // Формула: (c + m) * r + (rv + value)
+                    let part1 = mul_mod(
+                        &add_mod(&c, &m, &curve.q).unwrap(),
+                        &r,
+                        &curve.q
+                    ).unwrap();
+                    let part2 = add_mod(&rv, &U512::from_u64(self.value), &curve.q).unwrap();
+                    // Суммируем обе части
+                    welsib_u512_sum(vec![part1, part2])
                 } else {
                     return Err(std::io::Error::new(
                         std::io::ErrorKind::Interrupted,
@@ -435,6 +496,56 @@ impl Client {
                     "Ошибка: частичное значение владельца суммы не определено.",
                 ));
             };
+
+            if let Some(m) = m {
+                if let Some(c) = c {
+                    if !self.arguments.is_sum() {
+                                // ВЫЧИСЛЕНИЕ ВЕРИФИКАЦИОННОГО КЛЮЧА (аналог mvx из не сетевой версии)
+                                let mvx_left = mul_mod(
+                                    &add_mod(&c, &m, &curve.q).unwrap(), 
+                                    &r, 
+                                    &curve.q
+                                ).unwrap();
+
+                                let mvx_right = add_mod(
+                                    &x2_mod(&m, &curve.q).unwrap(), 
+                                    &U512::from_u64(self.value), 
+                                    &curve.q
+                                ).unwrap();
+
+                                let mvx_value = add_mod(&mvx_left, &mvx_right, &curve.q).unwrap();
+                                let mvx_point = make_verifying_key(&curve, &mvx_value).unwrap();
+
+                                // Сохраняем верификационный ключ в smpc_buffer для последующего использования
+                                smpc_buffer.set_random_client_key_part(&mvx_value);
+                                smpc_buffer.set_random_client_point_part(&mvx_point); // TODO: отправить send_point с новым типом PointType::Key
+                    } else {
+                        // rvyp = (c + m) * r + x2_mod(m) - rv
+                        let rvyp_value = add_mod(
+                            &mul_mod(&add_mod(&c, &m, &curve.q).unwrap(), &r, &curve.q).unwrap(),
+                            &sub_mod(&x2_mod(&m, &curve.q).unwrap(), &rv, &curve.q),
+                            &curve.q
+                        ).unwrap();
+                        
+                        let rvyp_point = make_verifying_key(&curve, &rvyp_value).unwrap();
+
+                        // rvyp = (c + m) * r + x2_mod(m) - rv
+                        // let rvyp_left = mul_mod(&add_mod(&c, &m, &curve.q).unwrap(), &r, &curve.q).unwrap();
+                        // let rvyp_right = sub_mod(&x2_mod(&m, &curve.q).unwrap(), &rv, &curve.q);
+                        // let rvyp_value = add_mod(&rvyp_left, &rvyp_right.unwrap(), &curve.q).unwrap();
+                        // let rvyp_point = make_verifying_key(&curve, &rvyp_value).unwrap();
+
+                        // smpc_buffer.set_sum_rvyp_point(rvyp_point);
+                        // Сохраняем верификационный ключ в smpc_buffer для последующего использования
+                        smpc_buffer.set_random_client_key_part(&rvyp_value);
+                        smpc_buffer.set_random_client_point_part(&rvyp_point); // TODO: отправить send_point с новым типом PointType::Key
+                    }
+                }
+            }
+
+            // TODO: сохранять полноценные доказательства bit_proofs, вместо c_points
+            // smpc_buffer.set_random_client_range_points_part(&c_points);
+
             smpc_buffer.set_random_client_sum(&agg_sum);
             let self_public_key = self.keypair.get_public_key();
             let another_keys: Vec<Point> = self.config.get_public_keys().iter().filter(|&v| *v != self_public_key).map(|v| v.clone()).collect();
@@ -560,8 +671,10 @@ impl Client {
         // TODO: добавить loop с лимитом attempts на отправку и учитывать вероятность поступления запроса reset на перерассчёт и переотправку данных для определённого клиента или сервера
         let mut is_point_matrix_sended = false;
         let mut is_point_list_sended = false;
+        let mut is_bit_proofs_sended = false;
         let mut solution_point_matrix = None;
         let mut solution_point_list = None;
+        let mut solution_bit_proofs_list = vec![];
         loop {
             // sleep(std::time::Duration::from_millis(100)); // DEBUG: duration
             // TODO: обработать получение статуса с сервера, если появилась команда reset, то запустить загрузку и пересчёт
@@ -569,6 +682,7 @@ impl Client {
             // TODO: не вычислять повторно ранее вычисленные значения
             if let Ok(smpc_buffer) = self.smpc_buffer.lock() {
                 // FIXME: make_value_matrix возвращает None
+                // 1. Отправка матричной точки (PointType::Matrix)
                 if !is_point_matrix_sended {
                     if let Some(v) = smpc_buffer.make_value_matrix(self.config.get_public_keys().len()-1) {
                         let point_matrix = welsib_make_verifying_key(&v);
@@ -595,45 +709,147 @@ impl Client {
                     }
                 }
 
+                // 2. Отправка list точки (PointType::List)
+                // if !is_point_list_sended {
+                    // TODO: (не точно) сертификат генерируется в два этапа, надо сначала с фиксацией времени отправить публичные ключи для BitProof, прежде чем с помощью ключей дать добро на второй этап с выполнением основных вычислений на основе секретных ключей от первого этапа
+                    
+                    // TODO: 1. Отправить публичный ключ для валидации отдельных бит контролёру
+                    // TODO: 2. 
+
+                    // TODO: отправить Point используя send_point и Vec<Point> используя цикл по битам с send_point_bit в отдельном цикле с попытками
+                    // if let Some(v) = if self.arguments.is_sum() {
+                    //     if let Some(random_nonce_orig_value) = smpc_buffer.get_random_nonce_orig_value() {
+                    //         // Some(random_nonce_orig_value.clone()+&random_nonce_orig_value.clone())
+                    //         let curve = EllipticCurve::make_curve_welsib();
+                    //         x2_mod(&random_nonce_orig_value, &curve.p) // TODO: выяснить, curve.p или curve.q
+                    //     } else {
+                    //         None
+                    //     }
+                    // } else {
+                    //     smpc_buffer.make_value_list(U512::from_u64(self.value))
+                    // } {
+                    //     let point_list = welsib_make_verifying_key(&v);
+                    //     if let Some(p) = point_list {
+                    //         match self.send_point(&p, PointType::List, self_position, &self.keypair) {
+                    //             Ok(()) => {
+                    //                 crate::d(format!("Отправка клиентского ключа point_list совершена успешно"));
+                    //                 is_point_list_sended = true;
+                    //                 solution_point_list = Some(p);
+                    //             },
+                    //             Err(_e) => {
+                    //                 crate::d(format!("Error: не удалось отправить point_matrix"));
+                    //                 sleep(std::time::Duration::from_millis(100));
+                    //             },
+                    //         }
+                    //     } else {
+                    //         crate::d(format!("Error: не удалось создать point_list из make_value_list"));
+                    //         sleep(std::time::Duration::from_millis(100));
+                    //     }
+                    // }
+                // }
+
+                // 2. Отправка list точки (PointType::List)
                 if !is_point_list_sended {
-                    if let Some(v) = if self.arguments.is_sum() {
-                        if let Some(random_nonce_orig_value) = smpc_buffer.get_random_nonce_orig_value() {
-                            // Some(random_nonce_orig_value.clone()+&random_nonce_orig_value.clone())
-                            let curve = EllipticCurve::make_curve_welsib();
-                            x2_mod(&random_nonce_orig_value, &curve.p) // TODO: выяснить, curve.p или curve.q
-                        } else {
-                            None
+                    if let Some(list_point) = smpc_buffer.get_random_client_point_part() {
+                        match self.send_point(&list_point, PointType::List, self_position, &self.keypair) {
+                            Ok(()) => {
+                                crate::d(format!("Отправка клиентского ключа list point завершена"));
+                                is_point_list_sended = true;
+                                solution_point_list = Some(list_point);
+                            },
+                            Err(_e) => {
+                                crate::d(format!("Error: не удалось отправить list point"));
+                                sleep(std::time::Duration::from_millis(100));
+                            },
                         }
-                    } else {
-                        smpc_buffer.make_value_list(U512::from_u64(self.value))
-                    } {
-                        let point_list = welsib_make_verifying_key(&v);
-                        if let Some(p) = point_list {
-                            match self.send_point(&p, PointType::List, self_position, &self.keypair) {
-                                Ok(()) => {
-                                    crate::d(format!("Отправка клиентского ключа point_list совершена успешно"));
-                                    is_point_list_sended = true;
-                                    solution_point_list = Some(p);
-                                },
-                                Err(_e) => {
-                                    crate::d(format!("Error: не удалось отправить point_matrix"));
+                    }
+                }
+
+                // 3. Отправка доказательств диапазона (нужен новый тип запроса)
+                // if !is_bit_proofs_sended {
+                //     if !self.arguments.is_sum() {
+                //         let bit_proofs = smpc_buffer.get_client_bit_proofs();
+
+                //         if let Some(bit_proofs) = bit_proofs {
+                //             // TODO: Реализовать метод send_bit_proofs для отправки доказательств диапазона
+                //             // Этот метод должен отправлять каждое доказательство BitProve отдельно
+                //             // или сериализовать весь Vec<BitProve>
+                            
+                //             // Отправляем каждое доказательство бита
+                //             for (i, bit_prove) in bit_proofs.iter().enumerate() {
+                //                 // TODO: Создать новый метод send_bit_prove или использовать send_point
+                //                 // с новым типом PointType::BitProof
+                //                 // self.send_bit_prove(bit_prove, i, self_position, &self.keypair)?;
+
+                //                 // TODO: loop (повторять до отправки)
+
+                //                 match self.send_bit_proof(bit_prove, i, self_position, &self.keypair) {
+                //                     Ok(()) => {
+                //                         crate::d(format!("Отправка битового доказательства {} успешна", i));
+                //                         is_bit_proofs_sended = true;
+                //                     },
+                //                     Err(e) => {
+                //                         crate::d(format!("Ошибка отправки битового доказательства {}: {:?}", i, e));
+                //                         // return Err(e);
+                //                         sleep(std::time::Duration::from_millis(100));
+                //                     }
+                //                 }
+                //             }
+
+                //             solution_bit_proofs_list = bit_proofs.clone();
+                //         }
+                //     }
+                // }
+
+                // 3. Отправка доказательств диапазона
+                if !is_bit_proofs_sended {
+                    if !self.arguments.is_sum() {
+                        let bit_proofs = smpc_buffer.get_client_bit_proofs();
+                        
+                        if let Some(bit_proofs) = bit_proofs {
+                            let mut sent_bits = vec![false; bit_proofs.len()];
+                            let mut all_sent = false;
+                            
+                            while !all_sent {
+                                all_sent = true;
+                                
+                                for (i, bit_prove) in bit_proofs.iter().enumerate() {
+                                    if sent_bits[i] {
+                                        continue;
+                                    }
+                                    
+                                    match self.send_bit_proof(bit_prove, i, self_position, &self.keypair) {
+                                        Ok(()) => {
+                                            crate::d(format!("Отправка битового доказательства {} успешна", i));
+                                            sent_bits[i] = true;
+                                        },
+                                        Err(e) => {
+                                            crate::d(format!("Ошибка отправки битового доказательства {}: {:?}", i, e));
+                                            all_sent = false;
+                                            sleep(std::time::Duration::from_millis(100));
+                                        }
+                                    }
+                                }
+                                
+                                if !all_sent {
                                     sleep(std::time::Duration::from_millis(100));
-                                },
+                                }
                             }
-                        } else {
-                            crate::d(format!("Error: не удалось создать point_list из make_value_list"));
-                            sleep(std::time::Duration::from_millis(100));
+                            
+                            is_bit_proofs_sended = true;
+                            solution_bit_proofs_list = bit_proofs.clone();
                         }
                     }
                 }
             }
-            if is_point_matrix_sended && is_point_list_sended {
+
+            if is_point_matrix_sended && is_point_list_sended && (is_bit_proofs_sended || self.arguments.is_sum()) {
                 crate::d(format!("Условия выхода из цикла отправки ключенвых points выполнены успешно"));
                 break;
             }
         }
 
-        Ok((solution_point_matrix.unwrap(), solution_point_list.unwrap()))
+        Ok((solution_point_matrix.unwrap(), solution_point_list.unwrap(), solution_bit_proofs_list))
     }
 
     // Инициализация раннеров (runner - отдельный параллельный процесс запускающий выполнение рассчётов calculation)
@@ -724,6 +940,49 @@ impl Client {
         Err(std::io::Error::new(
             std::io::ErrorKind::Interrupted,
             "Ошибка: отправка слота не удалась.",
+        ))
+    }
+
+    fn send_bit_proof(&self, bit_prove: &BitProve, bit_index: usize, client_index: usize, keypair: &Keypair) -> std::io::Result<()> {
+        // Handshake request
+        let attr = HandshakeRequestAttributes{};
+        let smpc_handshake_request = SMPCRequest::new(
+            String::from("handshake"),
+            attr.to_json(),
+        );
+        let handshake_response = self.send_request(smpc_handshake_request)?;
+
+        // Send bit proof request
+        let handshake_response_attributes = HandshakeResponseAttributes::from_json(&handshake_response.attributes);
+        if let Some(handshake_response_attributes) = handshake_response_attributes {
+            let bit_proof_bytes = bit_prove.to_bytes();
+            let request_attr = SendBitProofRequestAttributes::new(
+                bit_proof_bytes,
+                bit_index,
+                client_index,
+                handshake_response_attributes.nonce_sig,
+                keypair,
+            );
+            let smpc_send_bit_proof_request = SMPCRequest::new(
+                String::from("send_bit_proof"),
+                request_attr.to_json(),
+            );
+            let send_bit_proof_response = self.send_request(smpc_send_bit_proof_request)?;
+            let send_bit_proof_response_attributes = SendBitProofResponseAttributes::from_json(&send_bit_proof_response.attributes);
+            if let Some(send_bit_proof_response_attributes) = send_bit_proof_response_attributes {
+                if send_bit_proof_response_attributes.is_success(&request_attr.signature) {
+                    return Ok(());
+                }
+            }
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::Interrupted,
+                format!("Ошибка: {:?}", send_bit_proof_response.attributes),
+            ));
+        }
+
+        Err(std::io::Error::new(
+            std::io::ErrorKind::Interrupted,
+            "Ошибка: отправка битового доказательства не удалась.",
         ))
     }
 

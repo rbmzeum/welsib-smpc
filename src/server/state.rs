@@ -6,6 +6,7 @@ pub enum WelsibState {
     AwaitSendSlot,
     AwaitSendPointMatrix,
     AwaitSendPointList,
+    AwaitSendPointRangeVerificationKey,
     AwaitReceiveSlot,
     AwaitReset,
     AwaitOutput,

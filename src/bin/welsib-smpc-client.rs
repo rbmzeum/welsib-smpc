@@ -28,9 +28,10 @@ fn main() -> std::io::Result<()> {
 
     // Run
     let mut client = Client::new(&config, &arguments, keypair)?;
-    let (solution_point_matrix, solution_point_list) = client.run()?;
+    let (solution_point_matrix, solution_point_list, solution_bit_proofs_list) = client.run()?;
 
     // Done
+    // TODO: исправить в соответствии с интеграцией range proof и с учётом solution_bit_proofs_list
     let x = u2vec(solution_point_matrix.x.clone()).iter().map(|b| format!("{:02x}", b)).collect::<String>();
     let y = u2vec(solution_point_matrix.y.clone()).iter().map(|b| format!("{:02x}", b)).collect::<String>();
     let solution_point_matrix_json = String::from(format!("{{\"x\":\"{x}\",\"y\":\"{y}\"}}"));

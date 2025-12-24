@@ -57,6 +57,82 @@ impl BitProve {
     fn get_g(&self) -> &Point {
         &self.g
     }
+
+    pub fn to_bytes(&self) -> Vec<u8> {
+        [
+            self.t.to_be_bytes(),
+            self.r1.to_be_bytes().to_vec(),
+            self.r2.to_be_bytes().to_vec(),
+            self.diff.to_be_bytes(),
+            self.c.to_be_bytes(),
+            self.z.to_be_bytes()
+            // g не отправляется, считается что исходные конфигурации параметров эллиптических кривых согласованы
+        ].concat()
+    }
+
+    // pub fn from_bytes(bytes: &[u8], g: Point) -> Option<Self> {
+    //     // Проверяем минимальный размер: 6 полей, где:
+    //     // t: Point (128 байт) + r1: U512 (64 байта) + r2: U512 (64 байта) + 
+    //     // diff: Point (128 байт) + c: Point (128 байт) + z: Point (128 байт)
+    //     // Итого: 128*4 + 64*2 = 512 + 128 = 640 байт
+    //     if bytes.len() < 640 {
+    //         return None;
+    //     }
+        
+    //     let mut offset = 0;
+        
+    //     // Десериализуем точку t (128 байт)
+    //     let t = Self::parse_point(bytes, offset)?;
+    //     offset += 128;
+        
+    //     // Десериализуем r1 (64 байта)
+    //     let r1 = Self::parse_u512(bytes, offset)?;
+    //     offset += 64;
+        
+    //     // Десериализуем r2 (64 байта)
+    //     let r2 = Self::parse_u512(bytes, offset)?;
+    //     offset += 64;
+        
+    //     // Десериализуем точку diff (128 байт)
+    //     let diff = Self::parse_point(bytes, offset)?;
+    //     offset += 128;
+        
+    //     // Десериализуем точку c (128 байт)
+    //     let c = Self::parse_point(bytes, offset)?;
+    //     offset += 128;
+        
+    //     // Десериализуем точку z (128 байт)
+    //     let z = Self::parse_point(bytes, offset)?;
+        
+    //     Some(Self { t, r1, r2, diff, c, z, g })
+    // }
+    
+    // // Вспомогательная функция для десериализации точки
+    // fn parse_point(bytes: &[u8], offset: usize) -> Option<Point> {
+    //     if offset + 128 > bytes.len() {
+    //         return None;
+    //     }
+        
+    //     // x: 64 байта (512 бит)
+    //     let x_bytes = &bytes[offset..offset + 64];
+    //     let x = U512::from_be_bytes(x_bytes);
+        
+    //     // y: следующие 64 байта
+    //     let y_bytes = &bytes[offset + 64..offset + 128];
+    //     let y = U512::from_be_bytes(y_bytes);
+        
+    //     Some(Point { x, y })
+    // }
+    
+    // // Вспомогательная функция для десериализации U512
+    // fn parse_u512(bytes: &[u8], offset: usize) -> Option<U512> {
+    //     if offset + 64 > bytes.len() {
+    //         return None;
+    //     }
+        
+    //     let value_bytes = &bytes[offset..offset + 64];
+    //     Some(U512::from_be_bytes(value_bytes))
+    // }
 }
 
 #[derive(Debug, Clone)]
@@ -200,9 +276,10 @@ pub fn bit_verify(curve: &EllipticCurve, bp: &BitProve, public_key: &BitProvePub
     left_side == right_side
 }
 
-pub fn range_prove(curve: &EllipticCurve, value: u128, range: usize, k: &U512) -> Option<(Vec<U512>, Vec<Point>, Point)> {
+pub fn range_prove(curve: &EllipticCurve, value: u128, range: usize, k: &U512) -> Option<(Vec<U512>, Vec<BitProve>, Point, Point)> {
     let mut c_keys = vec![];
-    let mut c_points = vec![];
+    // let mut c_points = vec![];
+    let mut bit_proofs = vec![];
     let h = make_verifying_key(curve, k).unwrap();
     if value >> range > 0 && range != 128 { // При range == 128 используется весь range типа u128 (формируется доказательства для всего 128 битного RANGE)
         return None;
@@ -216,12 +293,14 @@ pub fn range_prove(curve: &EllipticCurve, value: u128, range: usize, k: &U512) -
             BitProvePublicKey::new(h.clone())
         );
         let bp = bit_prove(&curve, bit, &keys);
-        let result = bit_verify(&curve, &bp, keys.get_public_key());
+        // TODO: возвращать вместо Vec<Points> - Vec<BitProof>
+        // let result = bit_verify(&curve, &bp, keys.get_public_key());
         // println!("Result: bit {i} {:x?}", &result);
 
         let sk = keys.get_secret_key();
         c_keys.push(sk.get_rr().clone());
-        c_points.push(bp.get_c().clone());
+        // c_points.push(bp.get_c().clone());
+        bit_proofs.push(bp);
     }
 
     let mut value_left_side_parts = vec![];
@@ -258,12 +337,14 @@ pub fn range_prove(curve: &EllipticCurve, value: u128, range: usize, k: &U512) -
     // Доказывающий RANGE может вычислить confidential_value из c_points и обмануть проверяющего, поэтому в отдельности не используется
     // Используется совместно с доказательством чего-либо другого, где используется value вместе с доказательством RANGE
 
-    Some((c_keys, c_points, confidential_value))
+    // Some((c_keys, c_points, confidential_value))
+    Some((c_keys, bit_proofs, confidential_value, h))
 }
 
-pub fn range_point_from_bits(curve: &EllipticCurve, c_points: &Vec<Point>, range: usize) -> Point {
+pub fn range_point_from_bit_proofs(curve: &EllipticCurve, bit_proofs: &Vec<BitProve>, range: usize) -> Point {
     let mut value_parts = vec![];
-    for (i, c) in c_points.iter().enumerate() {
+    for (i, bp) in bit_proofs.iter().enumerate() {
+        let c = bp.get_c();
         if i == 0 {
             // Public:
             // P(c_i) = c*2^i
@@ -285,13 +366,24 @@ pub fn range_point_from_bits(curve: &EllipticCurve, c_points: &Vec<Point>, range
     curve.point_sum(value_parts).unwrap()
 }
 
-pub fn range_verify(curve: &EllipticCurve, c_points: &Vec<Point>, range: usize, value_left_side: Point) -> bool {
-    if range < c_points.len() {
+pub fn range_verify(curve: &EllipticCurve, bit_proofs: &Vec<BitProve>, range: usize, h: &Point, value_left_side: Point) -> bool {
+    if range < bit_proofs.len() {
         return false;
     }
-    let value_right_side = range_point_from_bits(curve, c_points, range);
 
     // println!("Value point sum:\n{:x?}\n{:x?}\n{:?}", &value_left_side, &value_right_side, value_left_side == value_right_side);
+    // TODO: верифицировать каждый бит, заменив входные c_points: &Vec<Point> на bit_prove: &Vec<BitProve> и BitProvePublicKey
+    // let result = bit_verify(&curve, &bp, keys.get_public_key());
+    // println!("Result: bit {i} {:x?}", &result);
+    let bp_verify_key = BitProvePublicKey::new(h.clone());
+    for (i, bp) in bit_proofs.iter().enumerate() {
+        let result = bit_verify(&curve, bp, &bp_verify_key);
+        if result == false {
+            return false;
+        }
+    }
+
+    let value_right_side = range_point_from_bit_proofs(curve, bit_proofs, range);
 
     value_left_side == value_right_side
 }

@@ -34,6 +34,7 @@ pub struct SMPCField {
     main_client_slots: BTreeMap<U512, Slot>,
     matrix_points: BTreeMap<U512, Point>,
     list_points: BTreeMap<U512, Point>,
+    range_verification_key_points: BTreeMap<U512, Point>,
     // TODO: range random value points
 }
 
@@ -53,6 +54,7 @@ impl SMPCField {
             main_client_slots: BTreeMap::new(),
             matrix_points: BTreeMap::new(),
             list_points: BTreeMap::new(),
+            range_verification_key_points: BTreeMap::new(),
         }
     }
 
@@ -83,6 +85,10 @@ impl SMPCField {
 
     pub fn set_list_points_debug(&mut self, list_points: BTreeMap<U512, Point>) {
         self.list_points = list_points
+    }
+
+    pub fn set_range_verification_key_points_debug(&mut self, range_verification_key_points: BTreeMap<U512, Point>) {
+        self.range_verification_key_points = range_verification_key_points
     }
     // END DEBUG
 
@@ -252,11 +258,16 @@ impl SMPCField {
         self.list_points.insert(client_public_key.x, point);
     }
 
+    pub fn set_point_range_verification_key(&mut self, client_public_key: Point, point: Point) {
+        self.range_verification_key_points.insert(client_public_key.x, point);
+    }
+
     pub fn is_points_loaded(&self, client_count: usize) -> bool {
         let mp_len = self.matrix_points.len();
         let lp_len = self.list_points.len();
+        let rp_len = self.range_verification_key_points.len();
 
-        (mp_len == client_count) && (lp_len == client_count)
+        (mp_len == client_count) && (lp_len == client_count) && (rp_len == client_count)
     }
 
     pub fn get_controller_matrix_point(&self, decrypt_key: &U512) -> Option<Point> {

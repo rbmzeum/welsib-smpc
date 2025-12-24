@@ -7,7 +7,7 @@ pub struct WelsibStream {
 
 impl WelsibStream {
     pub fn read(&mut self) -> Option<Vec<u8>> {
-        let mut buf = [0u8; 4096]; // 4kb
+        let mut buf = [0u8; 8*1024]; // 8Kb
         if self.tcp_stream.is_some() {
             match self.tcp_stream {
                 Some(ref mut tcp_stream) => match tcp_stream.read(&mut buf) {

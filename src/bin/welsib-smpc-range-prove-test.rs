@@ -1,4 +1,5 @@
 use welsib_u512_ec::elliptic_curve::EllipticCurve;
+use welsib_u512_ec::keys::{make_signing_key, make_verifying_key};
 use welsib_smpc::range_prove::{range_prove, range_verify};
 
 fn main() {
@@ -7,9 +8,9 @@ fn main() {
     const RANGE: usize = 4;
     let value = 0b1101; // 13
 
-    let k = make_signing_key(&curve).unwrap();
-    if let Some((c_keys, c_points, confidential_value)) = range_prove(&curve, value, RANGE, &k) { // Вызывается на стороне доказывающего
-        let result = range_verify(&curve, &c_points, RANGE, confidential_value); // Вызывается на сторое проверяющего (в отдельности не привязан к value)
+    let k = make_signing_key(&curve);
+    if let Some((_, bit_proofs, confidential_value, h)) = range_prove(&curve, value, RANGE, &k) { // Вызывается на стороне доказывающего
+        let result = range_verify(&curve, &bit_proofs, RANGE, &h, confidential_value); // Вызывается на сторое проверяющего (в отдельности не привязан к value)
         println!("Sulution: {:?}", &result);
     } else {
         println!("Value out of range");

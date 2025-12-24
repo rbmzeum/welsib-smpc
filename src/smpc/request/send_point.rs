@@ -10,6 +10,7 @@ use std::collections::HashMap;
 pub struct SendPointRequestAttributes {
     pub point_bytes: Vec<u8>,
     pub client_index: usize, // индекс для извлечения из конфига публичного ключа клиента config[client_index]
+    // pub bit_index: Option<usize>,
     pub nonce_sig: String, // nonce_sig = sign(hash(current_time_in_milliseconds div 8000), app_secret_key)
     pub signature: String, // сигнатура клиента
 }

@@ -2,6 +2,7 @@ pub mod handshake;
 pub mod send_slot;
 pub mod send_point;
 pub mod receive_slot;
+pub mod send_bit_proof;
 
 use crate::checksum::crc32;
 use crate::conv::{

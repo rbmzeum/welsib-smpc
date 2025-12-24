@@ -11,11 +11,11 @@ use welsib_u512_ec::keys::make_keypair;
 use welsib_u512_ec::elliptic_curve::EllipticCurve;
 use welsib_u512_ec::sign::EllipticCurveSign;
 
-use welsib_smpc::range_prove::{range_prove, range_verify, range_point_from_bits};
+use welsib_smpc::range_prove::{range_prove, range_verify, range_point_from_bit_proofs};
 use welsib_u512_ec::elliptic_curve::add_mod::add_mod;
 use welsib_u512_ec::elliptic_curve::sub_mod::sub_mod;
 use welsib_u512_ec::elliptic_curve::mul_mod::mul_mod;
-use welsib_smpc::range_prove::rr_i;
+use welsib_smpc::range_prove::{BitProve, rr_i};
 
 /// Демонстрационный пример конфиденциальных многосторонних вычислений (Secure Multi-Party Computation)
 /// 
@@ -225,18 +225,17 @@ fn main() {
     /// с использованием доказательства диапазона
     /// 
     /// Пример: Y = 100
-    let (rvy, rv0, rvyp, rvy_c_points) = {
+    let (rvy, rv0, rvyp, rvy_bit_proofs, rvy_h) = {
         let y: u64 = 100;
 
         // Создание доказательства диапазона для значения Y
-        let (c_keys, c_points, confidential_value) = range_prove(&curve, y as u128, RANGE, &y_agg_secret_key).unwrap();
+        let (c_keys, bit_proofs, confidential_value, h) = range_prove(&curve, y as u128, RANGE, &y_agg_secret_key).unwrap();
         
         // Вычисление ry через доказательство диапазона
         let ry = mul_mod(&rr_i(&c_keys, &curve.q), &y_agg_secret_key, &curve.q).unwrap();
         
         // Верификация доказательства диапазона
-        assert!(range_verify(&curve, &c_points, RANGE, 
-            make_verifying_key(&curve, &add_mod(&ry, &U512::from_u64(y.clone()), &curve.q).unwrap()).unwrap()));
+        assert!(range_verify(&curve, &bit_proofs, RANGE, &h, confidential_value));
 
         // Разделение ry на части для участников
         let rv0_parts = create_random_additive_parts(&ry, PARTS).unwrap();
@@ -271,7 +270,7 @@ fn main() {
         let rvyp = sub_mod(&add_mod(&rvyp, &x2_mod(&rv0_parts[PARTS-1], &curve.q).unwrap(), &curve.q).unwrap(), 
                           &ry, &curve.q);
 
-        (rvy, rv0, make_verifying_key(&curve, &rvyp).unwrap(), c_points)
+        (rvy, rv0, make_verifying_key(&curve, &rvyp).unwrap(), bit_proofs, h)
     };
 
     // =========================================================================
@@ -294,17 +293,17 @@ fn main() {
     /// rv0id = 103 (от налоговой)
     /// Результат: конфиденциальное представление X₁
     /// ```
-    let mut create_parts = |value: u64, id: usize, count: usize, rcid: &U512, rv0id: &U512, public_keys: &[&Point; 4]| -> (Point, Vec<Slot>, Vec<Point>) {
+    let mut create_parts = |value: u64, id: usize, count: usize, rcid: &U512, rv0id: &U512, public_keys: &[&Point; 4]| -> (Point, Vec<Slot>, Vec<BitProve>, Point, Point) {
         let x: u64 = value;
 
         // Создание доказательства диапазона для Xᵢ
-        let (c_keys, c_points, confidential_value) = range_prove(&curve, x as u128, RANGE, &x_agg_secret_keys[id]).unwrap();
+        // let (c_keys, bit_proofs, confidential_value) = range_prove(&curve, x as u128, RANGE, &x_agg_secret_keys[id]).unwrap();
+        let (c_keys, bit_proofs, confidential_value, h) = range_prove(&curve, x as u128, RANGE, &x_agg_secret_keys[id]).unwrap();
         
         let rx = mul_mod(&rr_i(&c_keys, &curve.q), &x_agg_secret_keys[id], &curve.q).unwrap();
         
         // Верификация доказательства диапазона
-        assert!(range_verify(&curve, &c_points, RANGE, 
-            make_verifying_key(&curve, &add_mod(&rx, &U512::from_u64(x.clone()), &curve.q).unwrap()).unwrap()));
+        assert!(range_verify(&curve, &bit_proofs, RANGE, &h, confidential_value.clone()));
 
         // Создание конфиденциального представления Xᵢ
         let rv_parts = create_random_additive_parts(&(curve.u512_sum([
@@ -326,7 +325,10 @@ fn main() {
         let mvx_right = add_mod(&x2_mod(rv0id, &curve.q).unwrap(), &U512::from_u64(x.clone()), &curve.q).unwrap();
         let mvx = make_verifying_key(&curve, &add_mod(&mvx_left, &mvx_right, &curve.q).unwrap()).unwrap();
 
-        (mvx, rv, c_points)
+        // mvx - Point для list (p2) (часть формулы за вычетом Point из c_points)
+        // rv - для matrix (p1)
+        // c_points - отдельные биты рандомизированного value из доказательства 128 битного диапазона для list (p2)
+        (mvx, rv, bit_proofs, confidential_value, h)
     };
 
     // =========================================================================
@@ -334,13 +336,13 @@ fn main() {
     // =========================================================================
 
     /// Банк 1 создаёт конфиденциальное представление X₁ = 45
-    let (mvx1, rv1, c_points1) = create_parts(45, 0, PARTS, 
+    let (mvx1, rv1, bit_proofs1, confidential_value1, h1) = create_parts(45, 0, PARTS, 
         &rc[0].decrypt(&part1_secret_key), 
         &rv0[0].decrypt(&part1_secret_key), 
         &public_keys);
 
     /// Банк 2 создаёт конфиденциальное представление X₂ = 55  
-    let (mvx2, rv2, c_points2) = create_parts(55, 1, PARTS,
+    let (mvx2, rv2, bit_proofs2, confidential_value2, h2) = create_parts(55, 1, PARTS,
         &rc[1].decrypt(&part2_secret_key),
         &rv0[1].decrypt(&part2_secret_key),
         &public_keys);
@@ -351,7 +353,7 @@ fn main() {
 
     /// Каждый участник публикует свой верификационный ключ
     /// на основе полученных конфиденциальных частей
-    let rv = [&rv1, &rv2, &rvy];
+    let rv = [&rv1, &rv2, &rvy]; // вместо сетевого кода обмена
     let z = U512::zero();
     
     // Банк 1 публикует свой ключ
@@ -386,10 +388,6 @@ fn main() {
     // ВЕРИФИКАЦИЯ КОРРЕКТНОСТИ ВЫЧИСЛЕНИЙ
     // =========================================================================
 
-    /// Преобразование точек доказательства диапазона в верификационные ключи
-    let mvx1_vp = range_point_from_bits(&curve, &c_points1, RANGE);
-    let mvx2_vp = range_point_from_bits(&curve, &c_points2, RANGE);
-
     // Формирование структур данных для верификации
     let mut matrix_points = BTreeMap::new();
     matrix_points.insert(part1_public_key.x.clone(), mx1.clone());
@@ -404,6 +402,21 @@ fn main() {
     // =========================================================================
     // ФИНАЛЬНАЯ ПРОВЕРКА КОРРЕКТНОСТИ
     // =========================================================================
+
+    // Проверка диапазонов для всех значений
+    // assert!(range_verify(&curve, &rvy_bit_proofs, RANGE, &rvy_h, confidential_value_rvy));
+    assert!(range_verify(&curve, &bit_proofs1, RANGE, &h1, confidential_value1.clone()));
+    assert!(range_verify(&curve, &bit_proofs2, RANGE, &h2, confidential_value2.clone()));
+
+    // Преобразование точек доказательства диапазона в верификационные ключи
+    let mvx1_vp = range_point_from_bit_proofs(&curve, &bit_proofs1, RANGE);
+    let mvx2_vp = range_point_from_bit_proofs(&curve, &bit_proofs2, RANGE);
+    // let rvy_vp = range_point_from_bit_proofs(&curve, &rvy_bit_proofs, RANGE);
+
+    // Проверка, что вычисленные точки совпадают с confidential_value
+    assert_eq!(mvx1_vp, confidential_value1);
+    assert_eq!(mvx2_vp, confidential_value2);
+    // assert_eq!(rvy_vp, confidential_value_rvy);
 
     /// Вычисление двух точек для проверки равенства:
     /// - p1: сумма матричных ключей участников

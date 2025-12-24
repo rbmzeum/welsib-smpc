@@ -2,7 +2,7 @@ pub fn d(s: String) {
     // eprintln!("{s}");
 }
 
-const keys: [&str; 8] = [
+const KEYS: [&str; 8] = [
     "key",
     // "send_request",
     "receive_slot",
@@ -19,7 +19,7 @@ const keys: [&str; 8] = [
 ];
 
 pub fn dd(s: String, key: &str) {
-    if keys.contains(&key) {
+    if KEYS.contains(&key) {
         eprintln!("{s}");
     }
 }
