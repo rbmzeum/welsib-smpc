@@ -95,6 +95,14 @@ fn main() {
     // ПРОТОКОЛ ОБМЕНА ЧАСТИЧНЫМИ КЛЮЧАМИ
     // =========================================================================
 
+    // Контролёр создаёт ключ сессии для присоединения проверки range proof
+    let kc_secret_main = create_random();
+    let kc_secret_main_parts = create_random_additive_parts(&kc_secret_main, PARTS+1).unwrap();
+    let kx1_secret = kc_secret_main_parts[0];
+    let kx2_secret = kc_secret_main_parts[1];
+    let ky_secret = kc_secret_main_parts[2];
+    let kc_secret = kc_secret_main_parts[3];
+
     /// Матрица дополнительных ключей для усиления конфиденциальности
     /// 
     /// Структура матрицы 4×3:
@@ -105,12 +113,8 @@ fn main() {
     /// Y:  [  233,   310,   405  ] = 948
     /// C:  [  244,   159,   138  ] = 541
     /// ```
-    /// Каждый участник получает свою строку матрицы
-    let kx1_secret = create_random();
-    let kx2_secret = create_random();
-    let ky_secret = create_random();
-    let kc_secret = create_random();
 
+    /// Каждый участник получает свою строку матрицы
     let kx1_parts = create_random_additive_parts(&kx1_secret, PARTS).unwrap();
     let kx2_parts = create_random_additive_parts(&kx2_secret, PARTS).unwrap();
     let ky_parts = create_random_additive_parts(&ky_secret, PARTS).unwrap();
@@ -402,6 +406,11 @@ fn main() {
     // =========================================================================
     // ФИНАЛЬНАЯ ПРОВЕРКА КОРРЕКТНОСТИ
     // =========================================================================
+
+    // Проверка использования оригинальных ключей на основе ключа контролёра
+    let h_main = make_verifying_key(&curve, &kc_secret_main).unwrap();
+    let h_agg = curve.point_sum(vec![h1.clone(), h2.clone(), rvy_h.clone()]).unwrap();
+    assert_eq!(h_main, h_agg);
 
     // Проверка диапазонов для всех значений
     // assert!(range_verify(&curve, &rvy_bit_proofs, RANGE, &rvy_h, confidential_value_rvy));
