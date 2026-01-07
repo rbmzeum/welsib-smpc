@@ -322,7 +322,7 @@ pub fn range_prove(curve: &EllipticCurve, value: u128, range: usize, k: &U512) -
             // P(c_i) = P(rr*k+b)*2^i
             value_left_side_parts.push(
                 curve.multiply(
-                    &U512::from_u64(1 << i),
+                    &U512::i_bit(i as u32),
                     &curve.multiply(
                         &add_mod(&mul_mod(&rr, k, &curve.q).unwrap(), &U512::from_u64((value >> i & 1) as u64), &curve.q).unwrap(),
                         &curve.g
@@ -356,7 +356,7 @@ pub fn range_point_from_bit_proofs(curve: &EllipticCurve, bit_proofs: &Vec<BitPr
             // P(c_i) = c*2^i
             value_parts.push(
                 curve.multiply(
-                    &U512::from_u64(1 << i),
+                    &U512::i_bit(i as u32),
                     c
                 ).unwrap()
             );
@@ -398,7 +398,7 @@ pub fn rr_i(c_keys: &Vec<U512>, curve_q: &U512) -> U512 {
             rr.clone()
         } else {
             // v[i] == rr*2^i = rr*(1<<i)
-            mul_mod(&rr, &U512::from_u64(1 << i), curve_q).unwrap()
+            mul_mod(&rr, &U512::i_bit(i as u32), curve_q).unwrap()
         });
     }
 
