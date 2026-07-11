@@ -476,23 +476,35 @@ impl SMPCBuffer {
         self.client_bit_proofs.clone()
     }
 
-    pub fn make_value_matrix(&self, client_count: usize) -> Option<U512> {
-        // FIXME: выявить наличие ошибок в этом методе
+    // pub fn make_value_matrix(&self, client_count: usize) -> Option<U512> {
+    //     // FIXME: выявить наличие ошибок в этом методе
+    //     if let Some(received_values) = &self.received_values {
+    //         let mut keys = vec![];
+    //         for i in 0..client_count {
+    //             if let Some(v) = received_values.get(&i) {
+    //                 keys.push(v.clone());
+    //             }
+    //         }
+    //         if keys.len() != client_count-1 {
+    //             // println!("DEBUG (make_value_matrix: keys.len() != client_count-1): {:?}", &keys);
+    //             None
+    //         } else {
+    //             Some(welsib_u512_sum(keys))
+    //         }
+    //     } else {
+    //         // println!("DEBUG (make_value_matrix: self.received_values is None)");
+    //         None
+    //     }
+    // }
+
+    pub fn make_value_matrix(&self) -> Option<U512> {
         if let Some(received_values) = &self.received_values {
-            let mut keys = vec![];
-            for i in 0..client_count {
-                if let Some(v) = received_values.get(&i) {
-                    keys.push(v.clone());
-                }
+            if received_values.is_empty() {
+                return None;
             }
-            if keys.len() != client_count-1 {
-                // println!("DEBUG (make_value_matrix: keys.len() != client_count-1): {:?}", &keys);
-                None
-            } else {
-                Some(welsib_u512_sum(keys))
-            }
+            let keys: Vec<U512> = received_values.values().cloned().collect();
+            Some(welsib_u512_sum(keys))
         } else {
-            // println!("DEBUG (make_value_matrix: self.received_values is None)");
             None
         }
     }

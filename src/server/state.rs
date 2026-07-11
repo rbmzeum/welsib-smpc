@@ -3,6 +3,7 @@ pub enum WelsibState {
     AwaitBegin,
     AwaitRouter,
     AwaitHandshake,
+    AwaitSendBitProof,
     AwaitSendSlot,
     AwaitSendPointMatrix,
     AwaitSendPointList,

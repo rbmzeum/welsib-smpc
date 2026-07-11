@@ -96,8 +96,7 @@ fn main() {
     // =========================================================================
 
     // Контролёр создаёт ключ сессии для присоединения проверки range proof
-    let kc_secret_main = create_random();
-    let kc_secret_main_parts = create_random_additive_parts(&kc_secret_main, PARTS+1).unwrap();
+    let kc_secret_main_parts = smpc_field.make_key_control(PARTS+1);
     let kx1_secret = kc_secret_main_parts[0];
     let kx2_secret = kc_secret_main_parts[1];
     let ky_secret = kc_secret_main_parts[2];
@@ -179,6 +178,7 @@ fn main() {
         ky_slots[id].decrypt(&part1_secret_key),
         kc_slots[id].decrypt(&part1_secret_key)
     ]);
+    // h1 = P(x1_agg_secret_key)
 
     let id = 1; // Клиент X₂
     let x2_agg_secret_key = curve.u512_sum(vec![
@@ -187,15 +187,18 @@ fn main() {
         ky_slots[id].decrypt(&part2_secret_key),
         kc_slots[id].decrypt(&part2_secret_key)
     ]);
+    // h2 = P(x2_agg_secret_key)
+
     let x_agg_secret_keys = vec![x1_agg_secret_key, x2_agg_secret_key];
 
     let id = 2; // Клиент Y
     let y_agg_secret_key = curve.u512_sum(vec![
         kx1_slots[id].decrypt(&sum_secret_key),
         kx2_slots[id].decrypt(&sum_secret_key),
-        ky_slots[id].decrypt(&sum_secret_key), 
+        ky_slots[id].decrypt(&sum_secret_key),
         kc_slots[id].decrypt(&sum_secret_key)
     ]);
+    // rvy_h = P(y_agg_secret_key)
 
     // =========================================================================
     // ПРОТОКОЛ КОНТРОЛЁРА (АУДИТОРА)
@@ -234,10 +237,10 @@ fn main() {
 
         // Создание доказательства диапазона для значения Y
         let (c_keys, bit_proofs, confidential_value, h) = range_prove(&curve, y as u128, RANGE, &y_agg_secret_key).unwrap();
-        
+
         // Вычисление ry через доказательство диапазона
         let ry = mul_mod(&rr_i(&c_keys, &curve.q), &y_agg_secret_key, &curve.q).unwrap();
-        
+
         // Верификация доказательства диапазона
         assert!(range_verify(&curve, &bit_proofs, RANGE, &h, confidential_value));
 
@@ -352,6 +355,14 @@ fn main() {
         &public_keys);
 
     // =========================================================================
+    // ОТПРАВКА КЛЮЧЕЙ ДЛЯ ВЕРИФИКАЦИИ ДИАПАЗОНОВ
+    // =========================================================================
+
+    smpc_field.insert_client_h(&h1);
+    smpc_field.insert_client_h(&h2);
+    smpc_field.insert_client_h(&rvy_h);
+
+    // =========================================================================
     // ФОРМИРОВАНИЕ МАТРИЦЫ ВЕРИФИКАЦИОННЫХ КЛЮЧЕЙ
     // =========================================================================
 
@@ -408,14 +419,23 @@ fn main() {
     // =========================================================================
 
     // Проверка использования оригинальных ключей на основе ключа контролёра
-    let h_main = make_verifying_key(&curve, &kc_secret_main).unwrap();
-    let h_agg = curve.point_sum(vec![h1.clone(), h2.clone(), rvy_h.clone()]).unwrap();
+    let h_main = smpc_field.get_h_main();
+    // let h_agg = curve.point_sum(vec![h1.clone(), h2.clone(), rvy_h.clone()]);
+    let h_agg = curve.point_sum(smpc_field.get_client_h_list());
     assert_eq!(h_main, h_agg);
 
     // Проверка диапазонов для всех значений
     // assert!(range_verify(&curve, &rvy_bit_proofs, RANGE, &rvy_h, confidential_value_rvy));
     assert!(range_verify(&curve, &bit_proofs1, RANGE, &h1, confidential_value1.clone()));
     assert!(range_verify(&curve, &bit_proofs2, RANGE, &h2, confidential_value2.clone()));
+
+    // Сохранение доказательств битов в smpc_field
+    for (i, bit_prove) in bit_proofs1.iter().enumerate() {
+        smpc_field.set_bit_proof(part1_public_key.clone(), i, bit_prove.clone());
+    }
+    for (i, bit_prove) in bit_proofs2.iter().enumerate() {
+        smpc_field.set_bit_proof(part2_public_key.clone(), i, bit_prove.clone());
+    }
 
     // Преобразование точек доказательства диапазона в верификационные ключи
     let mvx1_vp = range_point_from_bit_proofs(&curve, &bit_proofs1, RANGE);
@@ -435,8 +455,78 @@ fn main() {
     /// 1. Y действительно равно сумме X₁ + X₂
     /// 2. Все значения находятся в допустимом диапазоне
     /// 3. Никакие конфиденциальные данные не были раскрыты
-    let p1 = curve.point_sum(vec![mx1, mx2, my, mc]).unwrap();
-    let p2 = curve.point_sum(vec![mvx1, mvx1_vp, mvx2, mvx2_vp, rvyp]).unwrap();
+    let p1 = curve.point_sum(vec![mx1.clone(), mx2.clone(), my.clone(), mc.clone()]).unwrap();
+    let p2 = curve.point_sum(vec![mvx1.clone(), mvx1_vp.clone(), mvx2.clone(), mvx2_vp.clone(), rvyp.clone()]).unwrap();
+
+    // =========================================================================
+    // ОТЛАДОЧНАЯ ИНФОРМАЦИЯ ДЛЯ СРАВНЕНИЯ С СЕТЕВЫМ КОДОМ
+    // =========================================================================
+    welsib_smpc::dd(format!("DEBUG cmp: =================================================="), "cmp");
+    welsib_smpc::dd(format!("DEBUG cmp: ЗНАЧЕНИЯ ИЗ ТЕСТОВОГО КОДА (не сетевого):"), "cmp");
+    welsib_smpc::dd(format!("DEBUG cmp: =================================================="), "cmp");
+    welsib_smpc::dd(format!("DEBUG cmp: p1 (матрица) = 0x{:016x}", p1.x.get()[0]), "cmp");
+    welsib_smpc::dd(format!("DEBUG cmp: p2 (список) = 0x{:016x}", p2.x.get()[0]), "cmp");
+    welsib_smpc::dd(format!("DEBUG cmp: ---"), "cmp");
+    welsib_smpc::dd(format!("DEBUG cmp: Точки для p1 (матрица):"), "cmp");
+    welsib_smpc::dd(format!("DEBUG cmp:   mx1 (Банк 1) = 0x{:016x}", mx1.x.get()[0]), "cmp");
+    welsib_smpc::dd(format!("DEBUG cmp:   mx2 (Банк 2) = 0x{:016x}", mx2.x.get()[0]), "cmp");
+    welsib_smpc::dd(format!("DEBUG cmp:   my (Налоговая) = 0x{:016x}", my.x.get()[0]), "cmp");
+    welsib_smpc::dd(format!("DEBUG cmp:   mc (Контролёр) = 0x{:016x}", mc.x.get()[0]), "cmp");
+    welsib_smpc::dd(format!("DEBUG cmp: ---"), "cmp");
+    welsib_smpc::dd(format!("DEBUG cmp: Точки для p2 (список):"), "cmp");
+    welsib_smpc::dd(format!("DEBUG cmp:   mvx1 (list Банк 1) = 0x{:016x}", mvx1.x.get()[0]), "cmp");
+    welsib_smpc::dd(format!("DEBUG cmp:   mvx1_vp (bit_proof Банк 1) = 0x{:016x}", mvx1_vp.x.get()[0]), "cmp");
+    welsib_smpc::dd(format!("DEBUG cmp:   mvx2 (list Банк 2) = 0x{:016x}", mvx2.x.get()[0]), "cmp");
+    welsib_smpc::dd(format!("DEBUG cmp:   mvx2_vp (bit_proof Банк 2) = 0x{:016x}", mvx2_vp.x.get()[0]), "cmp");
+    welsib_smpc::dd(format!("DEBUG cmp:   rvyp (list Налоговая) = 0x{:016x}", rvyp.x.get()[0]), "cmp");
+    welsib_smpc::dd(format!("DEBUG cmp: ---"), "cmp");
+    welsib_smpc::dd(format!("DEBUG cmp: BitProve информации:"), "cmp");
+    welsib_smpc::dd(format!("DEBUG cmp:   bit_proofs1 count = {}", bit_proofs1.len()), "cmp");
+    for (i, bit_prove) in bit_proofs1.iter().enumerate() {
+        let debug_line = format!(
+            "bit_proofs2[{}]: t.x = 0x{:016x}, r1 = 0x{:016x}, r2 = 0x{:016x}, diff.x = 0x{:016x}, c.x = 0x{:016x}, z.x = 0x{:016x}",
+            i,
+            bit_prove.t.x.get()[0],
+            bit_prove.r1.get()[0],
+            bit_prove.r2.get()[0],
+            bit_prove.diff.x.get()[0],
+            bit_prove.c.x.get()[0],
+            bit_prove.z.x.get()[0]
+        );
+        welsib_smpc::dd(format!("DEBUG cmp_bp: {}", debug_line), "cmp_bp");
+        break;
+    }
+    welsib_smpc::dd(format!("DEBUG cmp:   bit_proofs2 count = {}", bit_proofs2.len()), "cmp_bp");
+    for (i, bit_prove) in bit_proofs2.iter().enumerate() {
+        let debug_line = format!(
+            "bit_proofs2[{}]: t.x = 0x{:016x}, r1 = 0x{:016x}, r2 = 0x{:016x}, diff.x = 0x{:016x}, c.x = 0x{:016x}, z.x = 0x{:016x}",
+            i,
+            bit_prove.t.x.get()[0],
+            bit_prove.r1.get()[0],
+            bit_prove.r2.get()[0],
+            bit_prove.diff.x.get()[0],
+            bit_prove.c.x.get()[0],
+            bit_prove.z.x.get()[0]
+        );
+        welsib_smpc::dd(format!("DEBUG cmp_bp: {}", debug_line), "cmp_bp");
+        break;
+    }
+    welsib_smpc::dd(format!("DEBUG cmp: ---"), "cmp");
+    welsib_smpc::dd(format!("DEBUG cmp: H точки:"), "cmp");
+    welsib_smpc::dd(format!("DEBUG cmp:   h1 = 0x{:016x}", h1.x.get()[0]), "cmp");
+    welsib_smpc::dd(format!("DEBUG cmp:   h2 = 0x{:016x}", h2.x.get()[0]), "cmp");
+    welsib_smpc::dd(format!("DEBUG cmp:   rvy_h = 0x{:016x}", rvy_h.x.get()[0]), "cmp");
+    welsib_smpc::dd(format!("DEBUG cmp: =================================================="), "cmp");
+
+    welsib_smpc::dd(format!("DEBUG cmp: Проверка confidential_value:"), "cmp");
+    welsib_smpc::dd(format!("DEBUG cmp:   confidential_value1 = 0x{:016x}", confidential_value1.x.get()[0]), "cmp");
+    welsib_smpc::dd(format!("DEBUG cmp:   confidential_value2 = 0x{:016x}", confidential_value2.x.get()[0]), "cmp");
+    welsib_smpc::dd(format!("DEBUG cmp: =================================================="), "cmp");
+
+    welsib_smpc::dd(format!("DEBUG cmp: Результат проверки: p1 {} p2", if p1 == p2 { "==" } else { "!=" }), "cmp");
+    welsib_smpc::dd(format!("DEBUG cmp:   p1.x[0] = 0x{:016x}", p1.x.get()[0]), "cmp");
+    welsib_smpc::dd(format!("DEBUG cmp:   p2.x[0] = 0x{:016x}", p2.x.get()[0]), "cmp");
+    welsib_smpc::dd(format!("DEBUG cmp: =================================================="), "cmp");
 
     // Критическая проверка - если точки равны, доказательство корректно
     assert_eq!(&p1, &p2);
@@ -450,5 +540,9 @@ fn main() {
     smpc_field.set_matrix_points_debug(matrix_points);
     smpc_field.set_list_points_debug(list_points);
 
-    let result = smpc_field.get_solution(&ctrl_secret_key);
+    if let Some(result) = smpc_field.get_solution(&ctrl_secret_key) {
+        if let Some(certificate) = result {
+            println!("{}", certificate.to_string());
+        }
+    }
 }

@@ -2,6 +2,7 @@ pub mod begin;
 pub mod router;
 pub mod handshake;
 pub mod send_slot;
+pub mod send_bit_proof;
 pub mod send_point_matrix;
 pub mod send_point_list;
 pub mod send_point_range_verification_key;

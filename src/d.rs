@@ -2,19 +2,23 @@ pub fn d(s: String) {
     // eprintln!("{s}");
 }
 
-const KEYS: [&str; 8] = [
-    "key",
+const KEYS: [&str; 0] = [
+    // "cmp",
+    // "cmp_bp",
+    // "solution",
+    // "range",
+    // "key",
     // "send_request",
-    "receive_slot",
-    "agg_received_key",
+    // "receive_slot",
+    // "agg_received_key",
     // "decode_key",
-    "run_runners",
-    "run",
+    // "run_runners",
+    // "run",
 
-    "send_slot_key",
-    "receive_slot_key",
+    // "send_slot_key",
+    // "receive_slot_key",
 
-    "keypair",
+    // "keypair",
     // ""
 ];
 

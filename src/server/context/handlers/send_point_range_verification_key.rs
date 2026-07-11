@@ -21,6 +21,7 @@ use crate::smpc::slot::{Slot, SlotType};
 
 impl WelsibContext {
     pub fn do_send_point_range_verification_key(&mut self) {
+        crate::dd(format!("DEBUG: Do send RangeVerificationKey"), "range");
         // println!("DEBUG DO Send point list");
         let mut smpc_send_point_response_command = None;
         // создать обработчик команды (принять слот и поместить в соответствующий слот сервера

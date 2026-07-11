@@ -62,6 +62,9 @@ impl WelsibContext {
                                     // println!("DEBUG send point (verify): {:?}", &client_verify_key);
                                     if let Ok(mut smpc_field) = self.smpc_field.lock() {
                                         let point = Point::from_be_bytes(&send_point_request_attr.point_bytes).unwrap(); // TODO: WelsibState::Done // TODO: ответить клиенту со статусом ошибка, если возникнет ошибка, вместо unwrap()
+                                        // При получении point_matrix
+                                        crate::dd(format!("DEBUG solution: Получена point_matrix от клиента {:?}: {:?}", 
+                                                        &client_verify_key.x, &point.x), "solution");
                                         smpc_field.set_point_matrix(client_verify_key.clone(), point);
                                         // подготовить ответ клиенту
                                         let private_key = self.keypair.get_secret_key();

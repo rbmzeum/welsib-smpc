@@ -27,6 +27,8 @@ impl WelsibContext {
                                     match smpc_request.command().as_str() {
                                         "handshake" => WelsibState::AwaitHandshake,
                                         "send" => WelsibState::AwaitSendSlot, // клиент отпралвять слот на сервер
+                                        "send_point_range_verification_key" => WelsibState::AwaitSendPointRangeVerificationKey,
+                                        "send_bit_proof" => WelsibState::AwaitSendBitProof,
                                         "send_point_matrix" => WelsibState::AwaitSendPointMatrix,
                                         "send_point_list" => WelsibState::AwaitSendPointList,
                                         "receive" => WelsibState::AwaitReceiveSlot, // клиент запрашивает слот с сервера

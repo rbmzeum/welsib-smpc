@@ -16,45 +16,45 @@ use welsib_u512_ec::elliptic_curve::rem_inv::rem_inv;
 
 #[derive(Debug, Clone)]
 pub struct BitProve {
-    t: Point,
-    r1: U512,
-    r2: U512,
-    diff: Point,
-    c: Point,
-    z: Point,
-    g: Point
+    pub t: Point,
+    pub r1: U512,
+    pub r2: U512,
+    pub diff: Point,
+    pub c: Point,
+    pub z: Point,
+    pub g: Point
 }
 
 impl BitProve {
-    fn new(t: Point, r1: U512, r2: U512, diff: Point, c: Point, z: Point, g: Point) -> Self {
+    pub fn new(t: Point, r1: U512, r2: U512, diff: Point, c: Point, z: Point, g: Point) -> Self {
         Self { t, r1, r2, diff, c, z, g }
     }
 
-    fn get_t(&self) -> &Point {
+    pub fn get_t(&self) -> &Point {
         &self.t
     }
 
-    fn get_r1(&self) -> &U512 {
+    pub fn get_r1(&self) -> &U512 {
         &self.r1
     }
 
-    fn get_r2(&self) -> &U512 {
+    pub fn get_r2(&self) -> &U512 {
         &self.r2
     }
 
-    fn get_diff(&self) -> &Point {
+    pub fn get_diff(&self) -> &Point {
         &self.diff
     }
 
-    fn get_c(&self) -> &Point {
+    pub fn get_c(&self) -> &Point {
         &self.c
     }
 
-    fn get_z(&self) -> &Point {
+    pub fn get_z(&self) -> &Point {
         &self.z
     }
 
-    fn get_g(&self) -> &Point {
+    pub fn get_g(&self) -> &Point {
         &self.g
     }
 
@@ -70,69 +70,70 @@ impl BitProve {
         ].concat()
     }
 
-    // pub fn from_bytes(bytes: &[u8], g: Point) -> Option<Self> {
-    //     // Проверяем минимальный размер: 6 полей, где:
-    //     // t: Point (128 байт) + r1: U512 (64 байта) + r2: U512 (64 байта) + 
-    //     // diff: Point (128 байт) + c: Point (128 байт) + z: Point (128 байт)
-    //     // Итого: 128*4 + 64*2 = 512 + 128 = 640 байт
-    //     if bytes.len() < 640 {
-    //         return None;
-    //     }
+    pub fn from_bytes(bytes: &[u8], g: Point) -> Option<Self> {
+        // Проверяем минимальный размер: 6 полей, где:
+        // t: Point (128 байт) + r1: U512 (64 байта) + r2: U512 (64 байта) + 
+        // diff: Point (128 байт) + c: Point (128 байт) + z: Point (128 байт)
+        // Итого: 128*4 + 64*2 = 512 + 128 = 640 байт
+        if bytes.len() < 640 {
+            return None;
+        }
         
-    //     let mut offset = 0;
+        let mut offset = 0;
         
-    //     // Десериализуем точку t (128 байт)
-    //     let t = Self::parse_point(bytes, offset)?;
-    //     offset += 128;
+        // Десериализуем точку t (128 байт)
+        let t = Self::parse_point(bytes, offset)?;
+        offset += 128;
         
-    //     // Десериализуем r1 (64 байта)
-    //     let r1 = Self::parse_u512(bytes, offset)?;
-    //     offset += 64;
+        // Десериализуем r1 (64 байта)
+        let r1 = Self::parse_u512(bytes, offset)?;
+        offset += 64;
         
-    //     // Десериализуем r2 (64 байта)
-    //     let r2 = Self::parse_u512(bytes, offset)?;
-    //     offset += 64;
+        // Десериализуем r2 (64 байта)
+        let r2 = Self::parse_u512(bytes, offset)?;
+        offset += 64;
         
-    //     // Десериализуем точку diff (128 байт)
-    //     let diff = Self::parse_point(bytes, offset)?;
-    //     offset += 128;
+        // Десериализуем точку diff (128 байт)
+        let diff = Self::parse_point(bytes, offset)?;
+        offset += 128;
         
-    //     // Десериализуем точку c (128 байт)
-    //     let c = Self::parse_point(bytes, offset)?;
-    //     offset += 128;
+        // Десериализуем точку c (128 байт)
+        let c = Self::parse_point(bytes, offset)?;
+        offset += 128;
         
-    //     // Десериализуем точку z (128 байт)
-    //     let z = Self::parse_point(bytes, offset)?;
+        // Десериализуем точку z (128 байт)
+        let z = Self::parse_point(bytes, offset)?;
         
-    //     Some(Self { t, r1, r2, diff, c, z, g })
-    // }
+        Some(Self { t, r1, r2, diff, c, z, g })
+    }
     
-    // // Вспомогательная функция для десериализации точки
-    // fn parse_point(bytes: &[u8], offset: usize) -> Option<Point> {
-    //     if offset + 128 > bytes.len() {
-    //         return None;
-    //     }
+    // Вспомогательная функция для десериализации точки
+    fn parse_point(bytes: &[u8], offset: usize) -> Option<Point> {
+        if offset + 128 > bytes.len() {
+            return None;
+        }
         
-    //     // x: 64 байта (512 бит)
-    //     let x_bytes = &bytes[offset..offset + 64];
-    //     let x = U512::from_be_bytes(x_bytes);
+        // Создаем вектор из среза
+        let point_bytes = Vec::from(&bytes[offset..offset + 128]);
         
-    //     // y: следующие 64 байта
-    //     let y_bytes = &bytes[offset + 64..offset + 128];
-    //     let y = U512::from_be_bytes(y_bytes);
-        
-    //     Some(Point { x, y })
-    // }
+        // Используем существующий метод Point::from_be_bytes
+        Point::from_be_bytes(&point_bytes)
+    }
     
-    // // Вспомогательная функция для десериализации U512
-    // fn parse_u512(bytes: &[u8], offset: usize) -> Option<U512> {
-    //     if offset + 64 > bytes.len() {
-    //         return None;
-    //     }
+    // Вспомогательная функция для десериализации U512
+    fn parse_u512(bytes: &[u8], offset: usize) -> Option<U512> {
+        if offset + 64 > bytes.len() {
+            return None;
+        }
         
-    //     let value_bytes = &bytes[offset..offset + 64];
-    //     Some(U512::from_be_bytes(value_bytes))
-    // }
+        // Преобразуем срез в массив фиксированного размера
+        let value_bytes: [u8; 64] = match bytes[offset..offset + 64].try_into() {
+            Ok(arr) => arr,
+            Err(_) => return None,
+        };
+        
+        Some(U512::from_be_bytes(&value_bytes))
+    }
 }
 
 #[derive(Debug, Clone)]

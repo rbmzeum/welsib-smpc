@@ -275,6 +275,7 @@ impl Client {
         ///////////////////////////////////////////////////////////////////////////////
 
         // println!("Step1");
+        crate::dd(format!("Отправка слотов"), "range");
         if self.arguments.is_sum() {
             // println!("Step2");
             // если клиент - определяет сумму, а не слагаемое, то разместить на сервере контролёра в SMPCField индивидуальные случайные значения
@@ -396,6 +397,7 @@ impl Client {
 
         // Расшифровать полученные слоты (Controller и Main) для использования в вычислении разделяемой случайной суммы
         // println!("Step12");
+        crate::dd(format!("индивидуальные случайные значения"), "range");
         // если клиент - определяет сумму, а не слагаемое, то разместить на сервере контролёра в SMPCField индивидуальные случайные значения
         let smpc_buffer_copy = self.smpc_buffer.clone();
         if let Ok(smpc_buffer) = &mut self.smpc_buffer.lock() {
@@ -449,17 +451,21 @@ impl Client {
             // 1. отправить h на сервер контролёра (ключ для верификации диапазона бит)
             // 2. send_bit_proof_point
             // ========================================
+            crate::dd(format!("DEBUG: Отправка клиентского ключа point_range_verification_key"), "range");
             if !self.arguments.is_sum() {
                 let mut is_point_range_verification_key_sended = false;
                 loop {
                     if !is_point_range_verification_key_sended {
+                        // TODO: вероятно на сервере не реализован обработчик или реализован не верно и не отлажен
                         match self.send_point(&h, PointType::RangeVerificationKey, self_position.clone(), &self.keypair) {
                             Ok(()) => {
                                 crate::d(format!("Отправка клиентского ключа point_range_verification_key совершена успешно"));
+                                crate::dd(format!("DEBUG: Отправка клиентского ключа point_range_verification_key совершена успешно"), "range");
                                 is_point_range_verification_key_sended = true;
                             },
                             Err(_e) => {
                                 crate::d(format!("Error: не удалось отправить point_range_verification_key"));
+                                crate::dd(format!("Error: не удалось отправить point_range_verification_key"), "range");
                                 sleep(std::time::Duration::from_millis(100));
                             },
                         }
@@ -470,6 +476,7 @@ impl Client {
                     }
                 }
             }
+            crate::dd(format!("DEBUG: Отправка клиентского ключа point_range_verification_key завершена успешно"), "range");
             // ========================================
 
             let agg_sum = if let Some(m) = m {
@@ -496,6 +503,12 @@ impl Client {
                     "Ошибка: частичное значение владельца суммы не определено.",
                 ));
             };
+
+            crate::dd(format!("DEBUG solution: agg_sum = {:?}", &agg_sum), "solution");
+            crate::dd(format!("DEBUG solution: value = {:?}", &self.value), "solution");
+            crate::dd(format!("DEBUG solution: r = {:?}", &r), "solution");
+            crate::dd(format!("DEBUG solution: c = {:?}", &c), "solution");
+            crate::dd(format!("DEBUG solution: m = {:?}", &m), "solution");
 
             if let Some(m) = m {
                 if let Some(c) = c {
@@ -549,6 +562,8 @@ impl Client {
             smpc_buffer.set_random_client_sum(&agg_sum);
             let self_public_key = self.keypair.get_public_key();
             let another_keys: Vec<Point> = self.config.get_public_keys().iter().filter(|&v| *v != self_public_key).map(|v| v.clone()).collect();
+            // Перед create_client_additive_parts
+            crate::dd(format!("DEBUG solution: Создание клиентских аддитивных частей для участников:\n{:?}\n{:?}", &participants, &another_keys.len()), "solution");
             smpc_buffer.create_client_additive_parts(participants, &another_keys, self.planned.clone(), smpc_buffer_copy)?;
             // TODO: отправить эти числа на сервер для раздачи клиентам и запустить процесс получения таких слотов от остальных участников
         }
@@ -557,6 +572,7 @@ impl Client {
         self.run_runners();
 
         // Отправить на сервер Value слоты для участников
+        crate::dd(format!("DEBUG: Отправить на сервер Value слоты для участников"), "range");
         let public_keys = self.config.get_public_keys().to_vec();
         let mut sended_slots = vec![];
         // println!("Step21");
@@ -608,6 +624,7 @@ impl Client {
         }
 
         crate::d(format!("DEBUG: Отправка на сервер Value слотов завершена успешно"));
+        crate::dd(format!("DEBUG: Отправка на сервер Value слотов завершена успешно"), "range");
 
         // Получение Value слотов остальных клиентов
         let public_keys = self.config.get_public_keys()[..self.config.get_public_keys().len() - 1].to_vec();
@@ -659,6 +676,7 @@ impl Client {
         }
 
         crate::d(format!("DEBUG: Загрузка с сервера Value слотов завершена успешно"));
+        crate::dd(format!("DEBUG: Получение с сервера Value слотов завершено успешно"), "range");
 
         // Запустить декодирование в параллельных процессах с использованием очереди свободных раннеров
         self.run_runners();
@@ -679,14 +697,18 @@ impl Client {
             // sleep(std::time::Duration::from_millis(100)); // DEBUG: duration
             // TODO: обработать получение статуса с сервера, если появилась команда reset, то запустить загрузку и пересчёт
             crate::d(format!("Process sending points:\n=============================="));
+            crate::dd(format!("Process sending points:\n=============================="), "range");
             // TODO: не вычислять повторно ранее вычисленные значения
             if let Ok(smpc_buffer) = self.smpc_buffer.lock() {
                 // FIXME: make_value_matrix возвращает None
                 // 1. Отправка матричной точки (PointType::Matrix)
                 if !is_point_matrix_sended {
-                    if let Some(v) = smpc_buffer.make_value_matrix(self.config.get_public_keys().len()-1) {
+                    // if let Some(v) = smpc_buffer.make_value_matrix(self.config.get_public_keys().len()-1) {
+                    if let Some(v) = smpc_buffer.make_value_matrix() {
                         let point_matrix = welsib_make_verifying_key(&v);
                         if let Some(p) = point_matrix {
+                            // При отправке point_matrix
+                            crate::dd(format!("DEBUG solution: Отправка point_matrix: {:?}", &p), "solution");
                             match self.send_point(&p, PointType::Matrix, self_position, &self.keypair) {
                                 Ok(()) => {
                                     crate::d(format!("Отправка клиентского ключа point_matrix совершена успешно"));
@@ -751,6 +773,8 @@ impl Client {
                 // 2. Отправка list точки (PointType::List)
                 if !is_point_list_sended {
                     if let Some(list_point) = smpc_buffer.get_random_client_point_part() {
+                        // При отправке point_list  
+                        crate::dd(format!("DEBUG solution: Отправка point_list: {:?}", &list_point), "solution");
                         match self.send_point(&list_point, PointType::List, self_position, &self.keypair) {
                             Ok(()) => {
                                 crate::d(format!("Отправка клиентского ключа list point завершена"));
@@ -817,7 +841,10 @@ impl Client {
                                     if sent_bits[i] {
                                         continue;
                                     }
-                                    
+
+                                    // При отправке bit_proofs
+                                    crate::dd(format!("DEBUG solution: Отправка bit_proof {}|{:?} для клиента {}", &i, &bit_prove, &self_position), "solution");
+
                                     match self.send_bit_proof(bit_prove, i, self_position, &self.keypair) {
                                         Ok(()) => {
                                             crate::d(format!("Отправка битового доказательства {} успешна", i));

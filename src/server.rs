@@ -171,14 +171,17 @@ impl Server {
         loop {
             if let Ok(smpc_field) = &self.smpc_field.lock() {
                 if smpc_field.is_points_loaded(self.config.get_public_keys().len() - 1) {
+                    crate::dd(format!("DEBUG: is_points_loaded has true"), "range");
                     solution = smpc_field.get_solution(&self.keypair.get_secret_key());
                     if solution.is_some() {
+                        crate::dd(format!("DEBUG: solution is some"), "range");
                         break;
                     }
                 }
             }
             sleep(std::time::Duration::from_millis(1000));
             crate::d(format!("Ожидание данных для вычисления результата."));
+            crate::dd(format!("Ожидание данных для вычисления результата."), "range");
         }
 
         match solution {

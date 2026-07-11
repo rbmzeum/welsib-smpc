@@ -124,6 +124,7 @@ impl Dispatcher {
             WelsibState::AwaitHandshake => context.do_handshake(),
             WelsibState::AwaitSendSlot => context.do_send_slot(),
             // WelsibState::AwaitSendPointKey => context.do_send_point_key(),
+            WelsibState::AwaitSendBitProof => context.do_send_bit_proof(),
             WelsibState::AwaitSendPointRangeVerificationKey => context.do_send_point_range_verification_key(),
             WelsibState::AwaitSendPointMatrix => context.do_send_point_matrix(),
             WelsibState::AwaitSendPointList => context.do_send_point_list(),
